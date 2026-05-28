@@ -1158,7 +1158,8 @@ class _GanttScreenState extends State<GanttScreen> {
                                                   // 时间行
                                                   Row(
                                                     children: [
-                                                      if (!isUnmarked)
+                                                      if (!isUnmarked &&
+                                                          (cellWidth - 10) >= 40)
                                                         Icon(
                                                           status == PerformanceStatus.wantToSee
                                                               ? Icons.star
@@ -1170,26 +1171,32 @@ class _GanttScreenState extends State<GanttScreen> {
                                                                   alpha:
                                                                       0.9),
                                                         ),
-                                                      if (!isUnmarked)
+                                                      if (!isUnmarked &&
+                                                          (cellWidth - 10) >= 40)
                                                         const SizedBox(
                                                             width: 2),
-                                                      Text(
-                                                        (perf['time'] as String?)
-                                                                ?.substring(
-                                                                    0,
-                                                                    5) ??
-                                                            '',
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          fontWeight:
-                                                              FontWeight
-                                                                  .w700,
-                                                          color: isUnmarked
-                                                              ? const Color(
-                                                                  0xFF4B5563)
-                                                              : Colors
-                                                                  .white,
-                                                          height: 1.1,
+                                                      Flexible(
+                                                        child: Text(
+                                                          (perf['time'] as String?)
+                                                                  ?.substring(
+                                                                      0,
+                                                                      5) ??
+                                                              '',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w700,
+                                                            color: isUnmarked
+                                                                ? const Color(
+                                                                    0xFF4B5563)
+                                                                : Colors
+                                                                    .white,
+                                                            height: 1.1,
+                                                          ),
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          maxLines: 1,
                                                         ),
                                                       ),
                                                     ],
