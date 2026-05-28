@@ -223,8 +223,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
       }
 
       if (mounted) {
-        final actors = await DatabaseHelper.instance.getAllActors();
-        final actorNames = actors.map((a) => a.name).toList();
 
         if (isScheduleFormat(text)) {
           final schedule = parseSchedule(text);
@@ -241,7 +239,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
           }
           final correctedSchedule = await _correctSchedule(schedule);
           _fillScheduleToForm(correctedSchedule);
-          await _saveNewActorsFromSchedule(correctedSchedule, actorNames);
         } else {
           final castList = parseCastText(text);
           if (castList.isEmpty) {
@@ -262,7 +259,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
               .map((c) => CastEntry(c.role, c.actor))
               .toList();
           _fillCastListToForm(castEntries);
-          await _saveNewActors(castEntries, actorNames);
         }
       }
     } catch (e) {
@@ -350,39 +346,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
     );
   }
 
-  Future<void> _saveNewActors(List<CastEntry> castList, List<String> existingNames) async {
-    final db = DatabaseHelper.instance;
-    var hasNew = false;
-    for (final entry in castList) {
-      if (entry.actor.isNotEmpty && !existingNames.contains(entry.actor)) {
-        await db.createActor(Actor(name: entry.actor));
-        hasNew = true;
-      }
-    }
-    if (hasNew) await _loadActorNames();
-  }
-
-  Future<void> _saveNewActorsFromSchedule(
-    List<ScheduleEntry> schedule,
-    List<String> existingNames,
-  ) async {
-    final db = DatabaseHelper.instance;
-    final seen = <String>{};
-    var hasNew = false;
-    for (final entry in schedule) {
-      for (final cast in entry.castList) {
-        if (cast.actor.isNotEmpty &&
-            !existingNames.contains(cast.actor) &&
-            !seen.contains(cast.actor)) {
-          seen.add(cast.actor);
-          await db.createActor(Actor(name: cast.actor));
-          hasNew = true;
-        }
-      }
-    }
-    if (hasNew) await _loadActorNames();
-  }
-
   Future<void> _saveShow() async {
     if (!_formKey.currentState!.validate()) return;
     if (_performances.isEmpty) {
@@ -426,10 +389,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
               role: roleName,
               actorName: actorName,
               isFeatured: role.isFeatured,
-              createdAt: DateTime.now().toIso8601String(),
-            ));
-            await db.createActor(Actor(
-              name: actorName,
               createdAt: DateTime.now().toIso8601String(),
             ));
           }
@@ -585,6 +544,10 @@ class _AddShowScreenState extends State<AddShowScreen> {
         actorNames: _actorNames,
         initialValue: controller.text,
         onSelected: (value) => Navigator.pop(context, value),
+        onActorAdded: (name) async {
+          await DatabaseHelper.instance.createActor(Actor(name: name));
+          await _loadActorNames();
+        },
       ),
     );
     if (selected != null && mounted) {
@@ -598,7 +561,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
     const timeW = 56.0;
     const roleW = 90.0;
     const cellH = 44.0;
-    const headerH = 68.0;
+    const headerH = 84.0;
 
     final borderSide = BorderSide(color: Colors.grey[300]!);
 
@@ -800,11 +763,13 @@ class _ActorPickerSheet extends StatefulWidget {
   final List<String> actorNames;
   final String initialValue;
   final ValueChanged<String> onSelected;
+  final ValueChanged<String>? onActorAdded;
 
   const _ActorPickerSheet({
     required this.actorNames,
     required this.initialValue,
     required this.onSelected,
+    this.onActorAdded,
   });
 
   @override
@@ -830,6 +795,10 @@ class _ActorPickerSheetState extends State<_ActorPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final searchText = _searchController.text.trim();
+    final isNotInList = searchText.isNotEmpty &&
+        !widget.actorNames.any((n) => n == searchText);
+
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -879,12 +848,24 @@ class _ActorPickerSheetState extends State<_ActorPickerSheet> {
                 },
               ),
             ),
-            if (_filtered.isEmpty)
+            if (_filtered.isEmpty && !isNotInList)
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text('无匹配演员',
                     style: TextStyle(color: Color(0xFF8A8F98))),
               ),
+            if (isNotInList && widget.onActorAdded != null) ...[
+              const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.add, color: Color(0xFF6B5BCD)),
+                title: Text('添加 "$searchText" 为新演员'),
+                onTap: () {
+                  widget.onActorAdded!(searchText);
+                  widget.onSelected(searchText);
+                },
+              ),
+            ],
             const SizedBox(height: 16),
           ],
         ),
