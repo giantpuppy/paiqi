@@ -104,6 +104,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
   }
 
+  void _onVerticalSwipe(DragEndDetails details) {
+    if (details.primaryVelocity == null) return;
+    if (details.primaryVelocity! < -150) {
+      // 向上滑动：月 -> 双周 -> 周
+      setState(() {
+        if (_calendarFormat == CalendarFormat.month) {
+          _calendarFormat = CalendarFormat.twoWeeks;
+        } else if (_calendarFormat == CalendarFormat.twoWeeks) {
+          _calendarFormat = CalendarFormat.week;
+        }
+      });
+    } else if (details.primaryVelocity! > 150) {
+      // 向下滑动：周 -> 双周 -> 月
+      setState(() {
+        if (_calendarFormat == CalendarFormat.week) {
+          _calendarFormat = CalendarFormat.twoWeeks;
+        } else if (_calendarFormat == CalendarFormat.twoWeeks) {
+          _calendarFormat = CalendarFormat.month;
+        }
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -125,231 +148,222 @@ class _CalendarScreenState extends State<CalendarScreen> {
         ),
         foregroundColor: Colors.white,
       ),
-      body: Column(
-        children: [
-          // 筛选栏
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: SegmentedButton<CalendarFilter>(
-              segments: [
-                ButtonSegment(
-                  value: CalendarFilter.all,
-                  label: Text(CalendarFilter.all.label),
-                ),
-                ButtonSegment(
-                  value: CalendarFilter.wantToSee,
-                  label: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF811FE2),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(CalendarFilter.wantToSee.label),
-                    ],
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          children: [
+            // 筛选栏
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: SegmentedButton<CalendarFilter>(
+                segments: [
+                  ButtonSegment(
+                    value: CalendarFilter.all,
+                    label: Text(CalendarFilter.all.label),
                   ),
-                ),
-                ButtonSegment(
-                  value: CalendarFilter.bought,
-                  label: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF34D399),
-                          shape: BoxShape.circle,
+                  ButtonSegment(
+                    value: CalendarFilter.wantToSee,
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF811FE2),
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(CalendarFilter.bought.label),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(CalendarFilter.wantToSee.label),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-              selected: {_filter},
-              onSelectionChanged: (set) {
-                setState(() => _filter = set.first);
-                _loadEventsForMonth(_focusedDay);
-                _loadPerformancesForDate(_selectedDay ?? _focusedDay);
-              },
-              style: ButtonStyle(
-                padding: WidgetStateProperty.all(
-                  const EdgeInsets.symmetric(horizontal: 4),
+                  ButtonSegment(
+                    value: CalendarFilter.bought,
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF34D399),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(CalendarFilter.bought.label),
+                      ],
+                    ),
+                  ),
+                ],
+                selected: {_filter},
+                onSelectionChanged: (set) {
+                  setState(() => _filter = set.first);
+                  _loadEventsForMonth(_focusedDay);
+                  _loadPerformancesForDate(_selectedDay ?? _focusedDay);
+                },
+                style: ButtonStyle(
+                  padding: WidgetStateProperty.all(
+                    const EdgeInsets.symmetric(horizontal: 4),
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // Calendar
-          Card(
-            margin: const EdgeInsets.all(12),
-            color: const Color(0xFF181818),
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: TableCalendar(
-                firstDay: DateTime(2020),
-                lastDay: DateTime(2030),
-                focusedDay: _focusedDay,
-                selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                calendarFormat: _calendarFormat,
-                availableCalendarFormats: const {
-                  CalendarFormat.month: '月',
-                  CalendarFormat.twoWeeks: '双周',
-                  CalendarFormat.week: '周',
-                },
-                eventLoader: (day) {
-                  final normalized = DateTime(day.year, day.month, day.day);
-                  return _events[normalized] ?? [];
-                },
-                onDaySelected: (selectedDay, focusedDay) {
-                  setState(() {
-                    _selectedDay = selectedDay;
-                    _focusedDay = focusedDay;
-                  });
-                  _loadPerformancesForDate(selectedDay);
-                },
-                onPageChanged: (focusedDay) {
-                  setState(() => _focusedDay = focusedDay);
-                  _loadEventsForMonth(focusedDay);
-                },
-                onFormatChanged: (format) {
-                  setState(() => _calendarFormat = format);
-                },
-                calendarBuilders: CalendarBuilders(
-                  markerBuilder: (context, date, events) {
-                    if (events.isEmpty) return const SizedBox.shrink();
-                    return Positioned(
-                      bottom: 1,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: events.take(3).map((e) {
-                          final status = (e as Map<String, dynamic>)['status'] as String? ?? 'unmarked';
-                          final color = status == 'want_to_see'
-                              ? const Color(0xFF811FE2)
-                              : const Color(0xFF34D399);
-                          return Container(
-                            width: 6,
-                            height: 6,
-                            margin: const EdgeInsets.symmetric(horizontal: 1),
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          );
-                        }).toList(),
+            // Calendar (wrapped with GestureDetector for swipe-to-change-format)
+            GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragEnd: _onVerticalSwipe,
+              child: Card(
+                margin: const EdgeInsets.all(12),
+                color: const Color(0xFF181818),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: TableCalendar(
+                    firstDay: DateTime(2020),
+                    lastDay: DateTime(2030),
+                    focusedDay: _focusedDay,
+                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                    calendarFormat: _calendarFormat,
+                    availableCalendarFormats: const {
+                      CalendarFormat.month: '月',
+                      CalendarFormat.twoWeeks: '双周',
+                      CalendarFormat.week: '周',
+                    },
+                    eventLoader: (day) {
+                      final normalized = DateTime(day.year, day.month, day.day);
+                      return _events[normalized] ?? [];
+                    },
+                    onDaySelected: (selectedDay, focusedDay) {
+                      setState(() {
+                        _selectedDay = selectedDay;
+                        _focusedDay = focusedDay;
+                      });
+                      _loadPerformancesForDate(selectedDay);
+                    },
+                    onPageChanged: (focusedDay) {
+                      setState(() => _focusedDay = focusedDay);
+                      _loadEventsForMonth(focusedDay);
+                    },
+                    onFormatChanged: (format) {
+                      setState(() => _calendarFormat = format);
+                    },
+                    calendarBuilders: CalendarBuilders(
+                      markerBuilder: (context, date, events) {
+                        if (events.isEmpty) return const SizedBox.shrink();
+                        return Positioned(
+                          bottom: 1,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: events.take(3).map((e) {
+                              final status = (e as Map<String, dynamic>)['status'] as String? ?? 'unmarked';
+                              final color = status == 'want_to_see'
+                                  ? const Color(0xFF811FE2)
+                                  : const Color(0xFF34D399);
+                              return Container(
+                                width: 6,
+                                height: 6,
+                                margin: const EdgeInsets.symmetric(horizontal: 1),
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        );
+                      },
+                      // 显示农历
+                      defaultBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false),
+                      todayBuilder: (context, day, focusedDay) => _buildCalendarCell(day, true, false),
+                      selectedBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, true),
+                      outsideBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
+                      disabledBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
+                    ),
+                    calendarStyle: CalendarStyle(
+                      markerSize: 6,
+                      markersMaxCount: 3,
+                      defaultTextStyle: const TextStyle(color: Colors.white),
+                      weekendTextStyle: const TextStyle(color: Color(0xFFB3B3B3)),
+                      outsideTextStyle: const TextStyle(color: Color(0xFF8A8F98)),
+                      todayDecoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                        shape: BoxShape.circle,
                       ),
-                    );
-                  },
-                  // 显示农历
-                  defaultBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false),
-                  todayBuilder: (context, day, focusedDay) => _buildCalendarCell(day, true, false),
-                  selectedBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, true),
-                  outsideBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
-                  disabledBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
-                ),
-                calendarStyle: CalendarStyle(
-                  markerSize: 6,
-                  markersMaxCount: 3,
-                  defaultTextStyle: const TextStyle(color: Colors.white),
-                  weekendTextStyle: const TextStyle(color: Color(0xFFB3B3B3)),
-                  outsideTextStyle: const TextStyle(color: Color(0xFF8A8F98)),
-                  todayDecoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                    shape: BoxShape.circle,
-                  ),
-                  selectedDecoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
-                    shape: BoxShape.circle,
+                      selectedDecoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    headerStyle: const HeaderStyle(
+                      formatButtonVisible: true,
+                      titleCentered: true,
+                      formatButtonShowsNext: false,
+                    ),
+                    locale: 'zh_CN',
                   ),
                 ),
-                headerStyle: const HeaderStyle(
-                  formatButtonVisible: true,
-                  titleCentered: true,
-                  formatButtonShowsNext: false,
-                ),
-                locale: 'zh_CN',
               ),
             ),
-          ),
 
-          // 分割条（支持上下滑动切换视图）
-          GestureDetector(
-            onVerticalDragEnd: (details) {
-              if (details.primaryVelocity == null) return;
-              if (details.primaryVelocity! < -150) {
-                // 向上滑动：月 -> 双周 -> 周
-                setState(() {
-                  if (_calendarFormat == CalendarFormat.month) {
-                    _calendarFormat = CalendarFormat.twoWeeks;
-                  } else if (_calendarFormat == CalendarFormat.twoWeeks) {
-                    _calendarFormat = CalendarFormat.week;
-                  }
-                });
-              } else if (details.primaryVelocity! > 150) {
-                // 向下滑动：周 -> 双周 -> 月
-                setState(() {
-                  if (_calendarFormat == CalendarFormat.week) {
-                    _calendarFormat = CalendarFormat.twoWeeks;
-                  } else if (_calendarFormat == CalendarFormat.twoWeeks) {
-                    _calendarFormat = CalendarFormat.month;
-                  }
-                });
-              }
-            },
-            child: Column(
-              children: [
-                const Divider(height: 1, color: Color(0xFF2A2A2A)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Icon(
-                    Icons.drag_handle,
-                    size: 20,
-                    color: const Color(0xFF4D4D4D),
+            // 分割条（胶囊形拖拽手柄，颜色随视图格式变化）
+            GestureDetector(
+              onVerticalDragEnd: _onVerticalSwipe,
+              child: Column(
+                children: [
+                  const Divider(height: 1, color: Color(0xFF2A2A2A)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: _calendarFormat == CalendarFormat.month
+                            ? const Color(0xFF6B5BCD)
+                            : (_calendarFormat == CalendarFormat.twoWeeks
+                                ? const Color(0xFF4D4D4D)
+                                : const Color(0xFF8A8F98)),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
 
-          // Selected date performances
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Row(
-              children: [
-                Text(
-                  '${_selectedDay?.day ?? _focusedDay.day}日 ${_weekdayFormat.format(_selectedDay ?? _focusedDay)}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            // Selected date performances
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(
+                children: [
+                  Text(
+                    '${_selectedDay?.day ?? _focusedDay.day}日 ${_weekdayFormat.format(_selectedDay ?? _focusedDay)}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                Text(
-                  '${_performances.length} 场',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF8A8F98),
+                  const Spacer(),
+                  Text(
+                    '${_performances.length} 场',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF8A8F98),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
 
-          Expanded(
-            child: _isLoading
+            _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _performances.isEmpty
                     ? _buildEmptyState()
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: _performances.length,
-                        itemBuilder: (context, index) {
-                          final perf = _performances[index];
+                    : Column(
+                        children: _performances.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final perf = entry.value;
                           final status = perf['status'] as String? ?? 'unmarked';
                           final isWantToSee = status == 'want_to_see';
                           final statusColor = isWantToSee
@@ -359,98 +373,99 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           return AnimatedListItem(
                             index: index,
                             child: Card(
-                              margin: const EdgeInsets.only(bottom: 8),
+                              margin: const EdgeInsets.only(
+                                  bottom: 8, left: 12, right: 12),
                               child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 4,
-                              ),
-                              leading: Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: statusColor.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: statusColor.withValues(alpha: 0.3),
-                                  ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 4,
                                 ),
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        perf['time']?.substring(0, 5) ?? '--:--',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                          color: statusColor,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Icon(
-                                        isWantToSee
-                                            ? Icons.star_border
-                                            : Icons.check_circle,
-                                        size: 12,
-                                        color: statusColor,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                perf['show_name'] ?? '未知剧目',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              subtitle: Text(
-                                perf['theater'] ?? '未知剧场',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFFB3B3B3),
-                                ),
-                              ),
-                              trailing: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: statusColor.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  isWantToSee ? '想看' : '已买',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: statusColor,
-                                  ),
-                                ),
-                              ),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  SlideFadeRoute(
-                                    page: ShowDetailScreen(
-                                      performanceId: perf['id'] as int,
+                                leading: Container(
+                                  width: 50,
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: statusColor.withValues(alpha: 0.3),
                                     ),
                                   ),
-                                ).then((_) {
-                                  _loadPerformancesForDate(
-                                      _selectedDay ?? _focusedDay);
-                                  _loadEventsForMonth(_focusedDay);
-                                });
-                              },
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          perf['time']?.substring(0, 5) ?? '--:--',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: statusColor,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Icon(
+                                          isWantToSee
+                                              ? Icons.star_border
+                                              : Icons.check_circle,
+                                          size: 12,
+                                          color: statusColor,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                title: Text(
+                                  perf['show_name'] ?? '未知剧目',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  perf['theater'] ?? '未知剧场',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFFB3B3B3),
+                                  ),
+                                ),
+                                trailing: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    isWantToSee ? '想看' : '已买',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: statusColor,
+                                    ),
+                                  ),
+                                ),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    SlideFadeRoute(
+                                      page: ShowDetailScreen(
+                                        performanceId: perf['id'] as int,
+                                      ),
+                                    ),
+                                  ).then((_) {
+                                    _loadPerformancesForDate(
+                                        _selectedDay ?? _focusedDay);
+                                    _loadEventsForMonth(_focusedDay);
+                                  });
+                                },
+                              ),
                             ),
-                          ),
-                        );
-                        },
+                          );
+                        }).toList(),
                       ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -534,30 +549,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Widget _buildEmptyState() {
-    return SingleChildScrollView(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _BreathingIcon(icon: Icons.bookmark_border),
-              const SizedBox(height: 16),
-              const Text(
-                '今日无标记场次',
-                style: TextStyle(color: Color(0xFF8A8F98)),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _BreathingIcon(icon: Icons.bookmark_border),
+            const SizedBox(height: 16),
+            const Text(
+              '今日无标记场次',
+              style: TextStyle(color: Color(0xFF8A8F98)),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '在甘特图标记「想看」或「已买」后，\n场次会显示在这里',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF7C7C7C),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                '在甘特图标记「想看」或「已买」后，\n场次会显示在这里',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF7C7C7C),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
