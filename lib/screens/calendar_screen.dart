@@ -6,6 +6,7 @@ import '../database/database_helper.dart';
 import '../utils/page_transitions.dart';
 import '../widgets/animated_list_item.dart';
 import 'show_detail_screen.dart';
+import 'year_calendar_screen.dart';
 
 enum CalendarFilter { all, wantToSee, bought }
 
@@ -510,105 +511,25 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  // 年历弹窗
+  // 年历页面
   void _showYearPicker() async {
-    var year = _focusedDay.year;
-    DateTime? selectedDate;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => DraggableScrollableSheet(
-          initialChildSize: 0.85,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) => Column(
-            children: [
-              // 拖拽手柄
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4D4D4D),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              // 年份导航
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left, size: 20),
-                      onPressed: () => setModalState(() => year--),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                    Text(
-                      '$year年',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right, size: 20),
-                      onPressed: () => setModalState(() => year++),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              // 12 个月迷你日历
-              Expanded(
-                child: GridView.builder(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    childAspectRatio: 0.85,
-                    crossAxisSpacing: 6,
-                    mainAxisSpacing: 6,
-                  ),
-                  itemCount: 12,
-                  itemBuilder: (context, index) {
-                    final month = index + 1;
-                    return _MiniMonthCalendar(
-                      year: year,
-                      month: month,
-                      events: _events,
-                      selectedDay: _selectedDay,
-                      onDaySelected: (date) {
-                        selectedDate = date;
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
+    final selectedDate = await Navigator.push(
+      context,
+      SlideFadeRoute(
+        page: YearCalendarScreen(
+          initialYear: _focusedDay.year,
+          selectedDay: _selectedDay,
         ),
       ),
-    );
+    ) as DateTime?;
 
     if (selectedDate != null) {
       setState(() {
-        _focusedDay = selectedDate!;
-        _selectedDay = selectedDate!;
+        _focusedDay = selectedDate;
+        _selectedDay = selectedDate;
       });
-      _loadEventsForMonth(selectedDate!);
-      _loadPerformancesForDate(selectedDate!);
+      _loadEventsForMonth(selectedDate);
+      _loadPerformancesForDate(selectedDate);
     }
   }
 
@@ -638,161 +559,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ==================== 迷你月日历组件（年历弹窗用） ====================
-
-class _MiniMonthCalendar extends StatelessWidget {
-  final int year;
-  final int month;
-  final Map<DateTime, List<Map<String, dynamic>>> events;
-  final DateTime? selectedDay;
-  final ValueChanged<DateTime> onDaySelected;
-
-  const _MiniMonthCalendar({
-    required this.year,
-    required this.month,
-    required this.events,
-    this.selectedDay,
-    required this.onDaySelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final firstDay = DateTime(year, month, 1);
-    final daysInMonth = DateTime(year, month + 1, 0).day;
-    final weekdayOfFirst = firstDay.weekday % 7; // 0=周日
-    final totalCells = ((weekdayOfFirst + daysInMonth) / 7).ceil() * 7;
-    final today = DateTime.now();
-
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF181818),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
-      ),
-      padding: const EdgeInsets.all(4),
-      child: Column(
-        children: [
-          // 月份标题
-          Text(
-            '$month月',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 2),
-          // 星期标题
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: const [
-              _WeekdayLabel('日'), _WeekdayLabel('一'), _WeekdayLabel('二'),
-              _WeekdayLabel('三'), _WeekdayLabel('四'), _WeekdayLabel('五'), _WeekdayLabel('六'),
-            ],
-          ),
-          const SizedBox(height: 2),
-          // 日期网格
-          Expanded(
-            child: Wrap(
-              spacing: 0,
-              runSpacing: 0,
-              children: List.generate(totalCells, (index) {
-                final dayOffset = index - weekdayOfFirst;
-                if (dayOffset < 0 || dayOffset >= daysInMonth) {
-                  return const SizedBox(width: 28, height: 22);
-                }
-                final day = dayOffset + 1;
-                final date = DateTime(year, month, day);
-                final normalized = DateTime(date.year, date.month, date.day);
-                final isToday = date.year == today.year && date.month == today.month && date.day == today.day;
-                final isSelected = selectedDay != null &&
-                    date.year == selectedDay!.year &&
-                    date.month == selectedDay!.month &&
-                    date.day == selectedDay!.day;
-                final dayEvents = events[normalized] ?? [];
-                final hasWantToSee = dayEvents.any((e) => e['status'] == 'want_to_see');
-                final hasBought = dayEvents.any((e) => e['status'] == 'bought');
-
-                return InkWell(
-                  onTap: () => onDaySelected(date),
-                  child: Container(
-                    width: 28,
-                    height: 22,
-                    decoration: isSelected
-                        ? BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            borderRadius: BorderRadius.circular(4),
-                          )
-                        : null,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          '$day',
-                          style: TextStyle(
-                            fontSize: 9,
-                            height: 1,
-                            color: isSelected
-                                ? Colors.white
-                                : (isToday
-                                    ? const Color(0xFFF54A45)
-                                    : Colors.white),
-                          ),
-                        ),
-                        if (dayEvents.isNotEmpty)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (hasWantToSee)
-                                Container(
-                                  width: 3,
-                                  height: 3,
-                                  margin: const EdgeInsets.only(right: 1),
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF811FE2),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              if (hasBought)
-                                Container(
-                                  width: 3,
-                                  height: 3,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF34D399),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                            ],
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WeekdayLabel extends StatelessWidget {
-  final String text;
-  const _WeekdayLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 20,
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 8, color: Color(0xFF8A8F98)),
       ),
     );
   }

@@ -72,7 +72,7 @@ class _GanttScreenState extends State<GanttScreen> {
   final DateFormat _fullDateFormat = DateFormat('yyyy-MM-dd');
 
   static const double _layerGap = 8;
-  static const double _rowPadding = 14;
+  static const double _rowPadding = 20;
   static const double _headerHeight = 48;
   static const double _leftPanelWidth = 120;
   static const double _minBlockHeight = 64;
@@ -933,34 +933,35 @@ class _GanttScreenState extends State<GanttScreen> {
                         final color = _getShowColor(showId);
                         final h = rowHeights[showId] ?? _getRowHeight([_minBlockHeight]);
 
-                        return Container(
-                          height: h,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            border: Border(
-                                bottom: BorderSide(
-                                    color: const Color(0xFF1F1F1F))),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 3,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  borderRadius: BorderRadius.circular(2),
+                        return GestureDetector(
+                          onTap: () => _showShowDetail(showId, showName),
+                          behavior: HitTestBehavior.translucent,
+                          child: Container(
+                            height: h,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                  bottom: BorderSide(
+                                      color: const Color(0xFF1F1F1F))),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 3,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () => _showShowDetail(showId, showName),
+                                const SizedBox(width: 8),
+                                Expanded(
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                            MainAxisAlignment.center,
                                     children: [
                                       Text(
                                         showName,
@@ -985,8 +986,8 @@ class _GanttScreenState extends State<GanttScreen> {
                                     ],
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       }).toList(),
@@ -1003,7 +1004,6 @@ class _GanttScreenState extends State<GanttScreen> {
                             children: showGroups.entries.map((entry) {
                               final showId = entry.key;
                               final perfs = entry.value;
-                              final layers = _getLayers(showId, perfs);
                               final rowH = rowHeights[showId] ?? _getRowHeight([_minBlockHeight]);
 
                               // 按 dayIndex 分组
@@ -1075,7 +1075,6 @@ class _GanttScreenState extends State<GanttScreen> {
                                     ...dayGroups.entries.expand((dayEntry) {
                                       final dayIndex = dayEntry.key;
                                       final dayPerfs = dayEntry.value;
-                                      final barColor = _getShowColor(showId);
 
                                       return dayPerfs
                                           .asMap()
@@ -1307,11 +1306,11 @@ class _GanttScreenState extends State<GanttScreen> {
           ),
           const Spacer(),
           Container(
-            width: 48,
-            height: 48,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               color: const Color(0xFF6B5BCD),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: IconButton(
               onPressed: () {
@@ -1321,7 +1320,7 @@ class _GanttScreenState extends State<GanttScreen> {
                       page: const AddShowScreen()),
                 ).then((_) => _loadData());
               },
-              icon: const Icon(Icons.add, size: 28),
+              icon: const Icon(Icons.add, size: 32),
               color: Colors.white,
               tooltip: '添加剧目',
             ),
@@ -1362,41 +1361,6 @@ class _GanttScreenState extends State<GanttScreen> {
         },
       ),
     );
-  }
-
-  Future<void> _toggleStatus(Performance perf) async {
-    final next = perf.status == 'bought'
-        ? 'unmarked'
-        : perf.status == 'want_to_see'
-            ? 'bought'
-            : 'want_to_see';
-    await DatabaseHelper.instance.updatePerformance(perf.copyWith(status: next));
-    _loadData();
-  }
-
-  Future<void> _deletePerformance(int perfId) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: const Text('删除后不可恢复，确定吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await DatabaseHelper.instance.deleteCastMembersByPerformanceId(perfId);
-      await DatabaseHelper.instance.deletePerformance(perfId);
-      _loadData();
-    }
   }
 
 }
