@@ -118,6 +118,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         } else if (_calendarFormat == CalendarFormat.twoWeeks) {
           _calendarFormat = CalendarFormat.week;
         }
+        _focusedDay = _selectedDay ?? _focusedDay;
       });
     } else if (details.primaryVelocity! > 150) {
       // 向下滑动：周 -> 双周 -> 月
@@ -127,6 +128,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         } else if (_calendarFormat == CalendarFormat.twoWeeks) {
           _calendarFormat = CalendarFormat.month;
         }
+        _focusedDay = _selectedDay ?? _focusedDay;
       });
     }
   }
@@ -174,90 +176,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ],
           ),
         ),
+        actions: [
+          _buildFilterMenu(),
+        ],
         foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         child: Column(
           children: [
-            // 筛选栏
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: SegmentedButton<CalendarFilter>(
-                segments: [
-                  ButtonSegment(
-                    value: CalendarFilter.all,
-                    label: Text(CalendarFilter.all.label),
-                  ),
-                  ButtonSegment(
-                    value: CalendarFilter.wantToSee,
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF811FE2),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(CalendarFilter.wantToSee.label),
-                      ],
-                    ),
-                  ),
-                  ButtonSegment(
-                    value: CalendarFilter.bought,
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF34D399),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(CalendarFilter.bought.label),
-                      ],
-                    ),
-                  ),
-                  ButtonSegment(
-                    value: CalendarFilter.watched,
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFD4A853),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(CalendarFilter.watched.label),
-                      ],
-                    ),
-                  ),
-                ],
-                selected: {_filter},
-                onSelectionChanged: (set) {
-                  setState(() => _filter = set.first);
-                  _loadEventsForMonth(_focusedDay);
-                  _loadPerformancesForDate(_selectedDay ?? _focusedDay);
-                },
-                style: ButtonStyle(
-                  padding: WidgetStateProperty.all(
-                    const EdgeInsets.symmetric(horizontal: 4),
-                  ),
-                ),
-              ),
-            ),
-
             // Calendar (wrapped with GestureDetector for swipe-to-change-format)
             GestureDetector(
               behavior: HitTestBehavior.translucent,
@@ -278,6 +205,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       CalendarFormat.twoWeeks: '双周',
                       CalendarFormat.week: '周',
                     },
+                    availableGestures: AvailableGestures.horizontalSwipe,
                     rowHeight: 64,
                     eventLoader: (day) {
                       final normalized = DateTime(day.year, day.month, day.day);
@@ -295,7 +223,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       _loadEventsForMonth(focusedDay);
                     },
                     onFormatChanged: (format) {
-                      setState(() => _calendarFormat = format);
+                      setState(() {
+                        _calendarFormat = format;
+                        _focusedDay = _selectedDay ?? _focusedDay;
+                      });
                     },
                     calendarBuilders: CalendarBuilders(
                       dowBuilder: (context, day) {
@@ -340,8 +271,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       defaultBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false),
                       todayBuilder: (context, day, focusedDay) => _buildCalendarCell(day, true, false),
                       selectedBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, true),
-                      outsideBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
-                      disabledBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false, isOutside: true),
+                      outsideBuilder: (context, day, focusedDay) => const SizedBox.shrink(),
+                      disabledBuilder: (context, day, focusedDay) => const SizedBox.shrink(),
                     ),
                     calendarStyle: CalendarStyle(
                       markerSize: 6,
@@ -359,18 +290,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         shape: BoxShape.circle,
                       ),
                     ),
-                    headerStyle: const HeaderStyle(
-                      formatButtonVisible: false,
-                      leftChevronVisible: false,
-                      rightChevronVisible: false,
-                      titleCentered: true,
-                      formatButtonShowsNext: false,
-                      titleTextStyle: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
+                    startingDayOfWeek: StartingDayOfWeek.monday,
+                    headerVisible: false,
                     locale: 'zh_CN',
                   ),
                 ),
@@ -614,6 +535,140 @@ class _CalendarScreenState extends State<CalendarScreen> {
       _loadEventsForMonth(selectedDate);
       _loadPerformancesForDate(selectedDate);
     }
+  }
+
+  Widget _buildFilterMenu() {
+    final filterColor = switch (_filter) {
+      CalendarFilter.wantToSee => const Color(0xFF811FE2),
+      CalendarFilter.bought => const Color(0xFF34D399),
+      CalendarFilter.watched => const Color(0xFFD4A853),
+      _ => null,
+    };
+
+    return PopupMenuButton<CalendarFilter>(
+      initialValue: _filter,
+      onSelected: (filter) {
+        setState(() => _filter = filter);
+        _loadEventsForMonth(_focusedDay);
+        _loadPerformancesForDate(_selectedDay ?? _focusedDay);
+      },
+      offset: const Offset(0, 40),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      color: const Color(0xFF2A2A2A),
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: CalendarFilter.all,
+          child: Row(
+            children: [
+              const SizedBox(width: 20),
+              Text(
+                CalendarFilter.all.label,
+                style: TextStyle(
+                  color: _filter == CalendarFilter.all ? Colors.white : const Color(0xFFB3B3B3),
+                  fontWeight: _filter == CalendarFilter.all ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        PopupMenuItem(
+          value: CalendarFilter.wantToSee,
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF811FE2),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                CalendarFilter.wantToSee.label,
+                style: TextStyle(
+                  color: _filter == CalendarFilter.wantToSee ? const Color(0xFF811FE2) : const Color(0xFFB3B3B3),
+                  fontWeight: _filter == CalendarFilter.wantToSee ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: CalendarFilter.bought,
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF34D399),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                CalendarFilter.bought.label,
+                style: TextStyle(
+                  color: _filter == CalendarFilter.bought ? const Color(0xFF34D399) : const Color(0xFFB3B3B3),
+                  fontWeight: _filter == CalendarFilter.bought ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: CalendarFilter.watched,
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFD4A853),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                CalendarFilter.watched.label,
+                style: TextStyle(
+                  color: _filter == CalendarFilter.watched ? const Color(0xFFD4A853) : const Color(0xFFB3B3B3),
+                  fontWeight: _filter == CalendarFilter.watched ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (filterColor != null) ...[
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: filterColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              _filter.label,
+              style: const TextStyle(fontSize: 14),
+            ),
+            const Icon(Icons.keyboard_arrow_down, size: 18),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildEmptyState() {
