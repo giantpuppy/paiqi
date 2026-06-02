@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,9 +10,19 @@ import '../models/cast_member.dart';
 import '../models/actor.dart';
 import '../utils/ocr_service.dart';
 import '../utils/knowledge_base.dart';
+import '../utils/cover_helper.dart';
 
 class AddShowScreen extends StatefulWidget {
-  const AddShowScreen({super.key});
+  final Show? initialShow;
+  final List<Performance>? initialPerformances;
+  final bool isEditMode;
+
+  const AddShowScreen({
+    super.key,
+    this.initialShow,
+    this.initialPerformances,
+    this.isEditMode = false,
+  });
 
   @override
   State<AddShowScreen> createState() => _AddShowScreenState();
@@ -23,6 +35,10 @@ class _PerformanceEntry {
   _PerformanceEntry()
       : dateController = TextEditingController(),
         time = '19:30';
+
+  void dispose() {
+    dateController.dispose();
+  }
 }
 
 class _RoleColumn {
@@ -65,15 +81,81 @@ class _AddShowScreenState extends State<AddShowScreen> {
   bool _isRecognizing = false;
   List<CastEntry>? _lastOcrRawResult;
   List<String> _actorNames = [];
+  String? _coverPath;
+
+  // 8色卡映射
+  static const List<Color> _coverColors = [
+    Color(0xFF1A1A2E),
+    Color(0xFF16213E),
+    Color(0xFF0F3460),
+    Color(0xFF533483),
+    Color(0xFF2C3333),
+    Color(0xFF2D4040),
+    Color(0xFF3A3A3A),
+    Color(0xFF2D1B69),
+  ];
 
   static const List<String> _timePresets = ['14:00', '14:30', '19:00', '19:30'];
 
   @override
   void initState() {
     super.initState();
-    _addPerformance();
-    _addRole();
+    if (widget.isEditMode && widget.initialShow != null) {
+      _nameController.text = widget.initialShow!.name;
+      _theaterController.text = widget.initialShow!.theater ?? '';
+      _coverPath = widget.initialShow!.coverPath;
+      _loadEditModeData();
+    } else {
+      _addPerformance();
+      _addRole();
+    }
     _loadActorNames();
+  }
+
+  Future<void> _loadEditModeData() async {
+    final db = DatabaseHelper.instance;
+    final performances = widget.initialPerformances ?? [];
+
+    for (final perf in performances) {
+      final entry = _PerformanceEntry();
+      entry.dateController.text = perf.date;
+      entry.time = perf.time ?? '19:30';
+      _performances.add(entry);
+
+      // 加载该场次的卡司
+      final casts = await db.getCastMembersByPerformanceId(perf.id!);
+      for (final cast in casts) {
+        // 查找是否已有该角色
+        final existingRoleIdx = _roles.indexWhere((r) => r.roleController.text == cast.role);
+        if (existingRoleIdx >= 0) {
+          // 已有角色，补充演员
+          _roles[existingRoleIdx].sync(_performances.length);
+          _roles[existingRoleIdx].actorControllers[_performances.length - 1].text = cast.actorName;
+        } else {
+          // 新角色
+          final role = _RoleColumn();
+          role.roleController.text = cast.role;
+          role.isFeatured = cast.isFeatured == true;
+          role.sync(_performances.length);
+          role.actorControllers[_performances.length - 1].text = cast.actorName;
+          _roles.add(role);
+        }
+      }
+    }
+
+    // 确保所有角色的 controller 数量与场次数量一致
+    for (final role in _roles) {
+      role.sync(_performances.length);
+    }
+
+    if (_performances.isEmpty) {
+      _addPerformance();
+    }
+    if (_roles.isEmpty) {
+      _addRole();
+    }
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadActorNames() async {
@@ -96,7 +178,8 @@ class _AddShowScreenState extends State<AddShowScreen> {
 
   void _removePerformance(int index) {
     setState(() {
-      _performances.removeAt(index);
+      final removed = _performances.removeAt(index);
+      removed.dispose();
       for (final role in _roles) {
         role.sync(_performances.length);
       }
@@ -118,77 +201,173 @@ class _AddShowScreenState extends State<AddShowScreen> {
     });
   }
 
-  Future<void> _pickDate(int perfIndex) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      locale: const Locale('zh', 'CN'),
-    );
-    if (picked != null) {
-      setState(() {
-        _performances[perfIndex].dateController.text = _fullDateFormat.format(picked);
-      });
-    }
+  // ==================== 海报选择 ====================
+
+  Future<void> _pickCoverImage() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+
+    final bytes = await picked.readAsBytes();
+    final showName = _nameController.text.trim().isNotEmpty
+        ? _nameController.text.trim()
+        : '未命名剧目';
+
+    final savedPath = await CoverHelper.saveCoverImage(showName, bytes);
+    setState(() => _coverPath = savedPath);
   }
 
-  Future<void> _pickTime(int perfIndex) async {
+  // ==================== 暗黑风格日期选择 ====================
+
+  Future<void> _pickDate(int perfIndex) async {
     final entry = _performances[perfIndex];
-    final result = await showModalBottomSheet<String>(
+    DateTime initialDate = DateTime.now();
+    if (entry.dateController.text.isNotEmpty) {
+      try {
+        initialDate = DateTime.parse(entry.dateController.text);
+      } catch (_) {}
+    }
+
+    DateTime? pickedDate;
+
+    await showModalBottomSheet(
       context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 40, height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-              ),
-              const SizedBox(height: 16),
-              const Text('选择开场时间', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 12, runSpacing: 12,
-                children: [
-                  ..._timePresets.map((t) => ActionChip(
-                    label: Text(t),
-                    onPressed: () => Navigator.pop(context, t),
-                  )),
-                  ActionChip(
-                    avatar: const Icon(Icons.schedule, size: 18),
-                    label: const Text('自定义'),
-                    onPressed: () async {
-                      final parts = entry.time.split(':');
-                      final picked = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay(
-                          hour: int.parse(parts[0]),
-                          minute: int.parse(parts[1]),
-                        ),
-                      );
-                      if (picked != null && context.mounted) {
-                        Navigator.pop(context,
-                          '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}',
-                        );
-                      }
-                    },
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: 320,
+            child: Column(
+              children: [
+                // 顶部栏
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消', style: TextStyle(color: Color(0xFF8A8F98))),
+                      ),
+                      const Text('选择日期', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          if (pickedDate != null) {
+                            setState(() {
+                              entry.dateController.text = _fullDateFormat.format(pickedDate!);
+                            });
+                          }
+                        },
+                        child: const Text('确定', style: TextStyle(color: Color(0xFF6B5BCD))),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 16),
-            ],
+                ),
+                const Divider(height: 1, color: Color(0xFF2A2A2A)),
+                // Cupertino 日期滚轮
+                Expanded(
+                  child: CupertinoTheme(
+                    data: const CupertinoThemeData(
+                      brightness: Brightness.dark,
+                      textTheme: CupertinoTextThemeData(
+                        dateTimePickerTextStyle: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                    child: CupertinoDatePicker(
+                      mode: CupertinoDatePickerMode.date,
+                      initialDateTime: initialDate,
+                      minimumDate: DateTime(2020),
+                      maximumDate: DateTime(2030),
+                      onDateTimeChanged: (date) {
+                        pickedDate = date;
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
-    if (result != null) {
-      setState(() => entry.time = result);
-    }
+  }
+
+  // ==================== 暗黑风格时间选择 ====================
+
+  Future<void> _pickTime(int perfIndex) async {
+    final entry = _performances[perfIndex];
+    final parts = entry.time.split(':');
+    final initialTime = TimeOfDay(
+      hour: int.parse(parts[0]),
+      minute: int.parse(parts[1]),
+    );
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: 320,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消', style: TextStyle(color: Color(0xFF8A8F98))),
+                      ),
+                      const Text('选择时间', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('确定', style: TextStyle(color: Color(0xFF6B5BCD))),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: Color(0xFF2A2A2A)),
+                Expanded(
+                  child: CupertinoTheme(
+                    data: const CupertinoThemeData(
+                      brightness: Brightness.dark,
+                      textTheme: CupertinoTextThemeData(
+                        dateTimePickerTextStyle: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                    child: CupertinoDatePicker(
+                      mode: CupertinoDatePickerMode.time,
+                      initialDateTime: DateTime(2026, 1, 1, initialTime.hour, initialTime.minute),
+                      use24hFormat: true,
+                      onDateTimeChanged: (date) {
+                        entry.time = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (mounted) setState(() {});
   }
 
   // ==================== OCR ====================
@@ -223,7 +402,6 @@ class _AddShowScreenState extends State<AddShowScreen> {
       }
 
       if (mounted) {
-
         if (isScheduleFormat(text)) {
           final schedule = parseSchedule(text);
           if (schedule.isEmpty) {
@@ -346,6 +524,8 @@ class _AddShowScreenState extends State<AddShowScreen> {
     );
   }
 
+  // ==================== 事务级保存 ====================
+
   Future<void> _saveShow() async {
     if (!_formKey.currentState!.validate()) return;
     if (_performances.isEmpty) {
@@ -364,36 +544,92 @@ class _AddShowScreenState extends State<AddShowScreen> {
     setState(() => _isSaving = true);
     try {
       final db = DatabaseHelper.instance;
-      final show = await db.createShow(Show(
-        name: _nameController.text.trim(),
-        theater: _theaterController.text.trim().isNotEmpty
-            ? _theaterController.text.trim() : null,
-        createdAt: DateTime.now().toIso8601String(),
-      ));
+      final showName = _nameController.text.trim();
+      final theater = _theaterController.text.trim().isNotEmpty
+          ? _theaterController.text.trim() : null;
 
-      for (int pi = 0; pi < _performances.length; pi++) {
-        final perfEntry = _performances[pi];
-        final performance = await db.createPerformance(Performance(
-          showId: show.id!,
-          date: perfEntry.dateController.text,
-          time: perfEntry.time,
-          status: 'unmarked',
+      // 编辑模式下：海报改名联动
+      String? finalCoverPath = _coverPath;
+      if (widget.isEditMode && widget.initialShow != null) {
+        final oldName = widget.initialShow!.name;
+        if (oldName != showName && _coverPath != null && _coverPath!.isNotEmpty) {
+          finalCoverPath = await CoverHelper.renameCoverImage(_coverPath, showName);
+        }
+      }
+
+      if (widget.isEditMode && widget.initialShow != null) {
+        // 编辑模式：更新 show + 事务替换 performances
+        final updatedShow = widget.initialShow!.copyWith(
+          name: showName,
+          theater: theater,
+          coverPath: finalCoverPath,
+        );
+        await db.updateShow(updatedShow);
+
+        // 构建 performances + casts 数据
+        final perfDataList = <Map<String, dynamic>>[];
+        for (int pi = 0; pi < _performances.length; pi++) {
+          final perfEntry = _performances[pi];
+          final casts = <CastMember>[];
+          for (final role in _roles) {
+            final roleName = role.roleController.text.trim();
+            final actorName = role.actorControllers[pi].text.trim();
+            if (roleName.isNotEmpty && actorName.isNotEmpty) {
+              casts.add(CastMember(
+                performanceId: 0, // 会在 replaceAllPerformances 中被替换
+                role: roleName,
+                actorName: actorName,
+                isFeatured: role.isFeatured,
+                createdAt: DateTime.now().toIso8601String(),
+              ));
+            }
+          }
+          perfDataList.add({
+            'performance': Performance(
+              showId: widget.initialShow!.id!,
+              date: perfEntry.dateController.text,
+              time: perfEntry.time,
+              status: 'unmarked',
+              createdAt: DateTime.now().toIso8601String(),
+            ),
+            'casts': casts,
+          });
+        }
+        await db.replaceAllPerformances(widget.initialShow!.id!, perfDataList);
+      } else {
+        // 新增模式
+        final show = await db.createShow(Show(
+          name: showName,
+          theater: theater,
+          coverPath: finalCoverPath,
           createdAt: DateTime.now().toIso8601String(),
         ));
-        for (final role in _roles) {
-          final roleName = role.roleController.text.trim();
-          final actorName = role.actorControllers[pi].text.trim();
-          if (roleName.isNotEmpty && actorName.isNotEmpty) {
-            await db.createCastMember(CastMember(
-              performanceId: performance.id!,
-              role: roleName,
-              actorName: actorName,
-              isFeatured: role.isFeatured,
-              createdAt: DateTime.now().toIso8601String(),
-            ));
+
+        for (int pi = 0; pi < _performances.length; pi++) {
+          final perfEntry = _performances[pi];
+          final performance = await db.createPerformance(Performance(
+            showId: show.id!,
+            date: perfEntry.dateController.text,
+            time: perfEntry.time,
+            status: 'unmarked',
+            createdAt: DateTime.now().toIso8601String(),
+          ));
+          for (final role in _roles) {
+            final roleName = role.roleController.text.trim();
+            final actorName = role.actorControllers[pi].text.trim();
+            if (roleName.isNotEmpty && actorName.isNotEmpty) {
+              await db.createCastMember(CastMember(
+                performanceId: performance.id!,
+                role: roleName,
+                actorName: actorName,
+                isFeatured: role.isFeatured,
+                createdAt: DateTime.now().toIso8601String(),
+              ));
+            }
           }
         }
       }
+
       // 保存到知识库（如果数据来自OCR识别）
       if (_lastOcrRawResult != null && _roles.isNotEmpty && _performances.isNotEmpty) {
         final finalCastList = <CastEntry>[];
@@ -412,10 +648,26 @@ class _AddShowScreenState extends State<AddShowScreen> {
           originalCastList: _lastOcrRawResult,
         );
       }
+
+      // 创建演员记录
+      for (final role in _roles) {
+        for (int pi = 0; pi < _performances.length; pi++) {
+          final actorName = role.actorControllers[pi].text.trim();
+          if (actorName.isNotEmpty) {
+            try {
+              await db.createActor(Actor(
+                name: actorName,
+                createdAt: DateTime.now().toIso8601String(),
+              ));
+            } catch (_) {}
+          }
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('剧目添加成功！')));
-        Navigator.pop(context);
+          SnackBar(content: Text(widget.isEditMode ? '剧目更新成功！' : '剧目添加成功！')));
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -431,7 +683,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
   void dispose() {
     _nameController.dispose();
     _theaterController.dispose();
-    for (final p in _performances) { p.dateController.dispose(); }
+    for (final p in _performances) { p.dispose(); }
     for (final r in _roles) { r.dispose(); }
     super.dispose();
   }
@@ -446,7 +698,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('添加剧目'),
+        title: Text(widget.isEditMode ? '编辑剧目' : '添加剧目'),
         actions: [
           if (_isSaving)
             const Padding(
@@ -463,37 +715,8 @@ class _AddShowScreenState extends State<AddShowScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // 剧目 + 剧场
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextFormField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: '剧目名称',
-                      hintText: '如：春逝',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    ),
-                    validator: (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 4,
-                  child: TextFormField(
-                    controller: _theaterController,
-                    decoration: const InputDecoration(
-                      labelText: '演出地点',
-                      hintText: '如：国家话剧院',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            // 海报 + 剧目信息（上下叠放）
+            _buildHeaderSection(),
             const SizedBox(height: 20),
 
             // 表格
@@ -532,6 +755,83 @@ class _AddShowScreenState extends State<AddShowScreen> {
     );
   }
 
+  // ==================== 头部：海报 + 剧目信息 ====================
+
+  Widget _buildHeaderSection() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 左侧：3:4 海报位
+        GestureDetector(
+          onTap: _pickCoverImage,
+          child: Container(
+            width: 90,
+            height: 120, // 3:4 比例
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: _getCoverColor(),
+              image: _coverPath != null && _coverPath!.isNotEmpty
+                  ? DecorationImage(
+                      image: FileImage(File(_coverPath!)),
+                      fit: BoxFit.cover,
+                    )
+                  : null,
+            ),
+            child: _coverPath == null || _coverPath!.isEmpty
+                ? Center(
+                    child: Text(
+                      _nameController.text.trim().isNotEmpty
+                          ? _nameController.text.trim().substring(0, _nameController.text.trim().length > 2 ? 2 : _nameController.text.trim().length)
+                          : '剧目',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+        ),
+        const SizedBox(width: 16),
+        // 右侧：剧目名称 + 演出地点纵向叠放
+        Expanded(
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: '剧目名称',
+                  hintText: '如：春逝',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
+                onChanged: (_) => setState(() {}), // 刷新海报文字
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _theaterController,
+                decoration: const InputDecoration(
+                  labelText: '演出地点',
+                  hintText: '如：国家话剧院',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _getCoverColor() {
+    if (_coverPath != null && _coverPath!.isNotEmpty) return Colors.transparent;
+    final id = widget.initialShow?.id ?? 0;
+    return _coverColors[id.abs() % _coverColors.length];
+  }
+
   Future<void> _showActorPicker(int perfIndex, int roleIndex) async {
     final controller = _roles[roleIndex].actorControllers[perfIndex];
     final selected = await showModalBottomSheet<String>(
@@ -555,6 +855,8 @@ class _AddShowScreenState extends State<AddShowScreen> {
     }
   }
 
+  // ==================== 表格（暗黑风格） ====================
+
   Widget _buildTable() {
     const actionW = 36.0;
     const dateW = 80.0;
@@ -563,37 +865,35 @@ class _AddShowScreenState extends State<AddShowScreen> {
     const cellH = 44.0;
     const headerH = 84.0;
 
-    final borderSide = BorderSide(color: Colors.grey[300]!);
-
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: const Color(0xFF2A2A2A)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Column(
           children: [
-            // 表头
+            // 表头 — 深色 Surface-2
             Container(
               height: headerH,
-              decoration: BoxDecoration(color: Colors.grey[50]),
+              decoration: const BoxDecoration(color: Color(0xFF1E1E1E)),
               child: Row(
                 children: [
                   // 删除列
                   Container(width: actionW, height: headerH,
-                    decoration: BoxDecoration(border: Border(right: borderSide)),
+                    decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                   ),
                   // 日期列
                   Container(width: dateW, height: headerH,
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(border: Border(right: borderSide)),
+                    decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                     child: const Text('日期', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                   ),
                   // 时间列
                   Container(width: timeW, height: headerH,
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(border: Border(right: borderSide)),
+                    decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                     child: const Text('时间', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                   ),
                   // 角色列（可滚动）
@@ -609,7 +909,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
                               width: roleW,
                               height: headerH,
                               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                              decoration: BoxDecoration(border: Border(right: borderSide)),
+                              decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -680,14 +980,14 @@ class _AddShowScreenState extends State<AddShowScreen> {
 
               return Container(
                 height: cellH,
-                decoration: BoxDecoration(border: Border(top: borderSide)),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFF2A2A2A)))),
                 child: Row(
                   children: [
                     // 删除
                     Container(
                       width: actionW, height: cellH,
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(border: Border(right: borderSide)),
+                      decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                       child: _performances.length > 1
                         ? IconButton(
                             icon: Icon(Icons.close, size: 16, color: Colors.grey[400]),
@@ -701,7 +1001,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
                     Container(
                       width: dateW, height: cellH,
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(border: Border(right: borderSide)),
+                      decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                       child: InkWell(
                         onTap: () => _pickDate(pi),
                         child: perf.dateController.text.isEmpty
@@ -713,7 +1013,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
                     Container(
                       width: timeW, height: cellH,
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(border: Border(right: borderSide)),
+                      decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                       child: InkWell(
                         onTap: () => _pickTime(pi),
                         child: Text(perf.time, style: const TextStyle(fontSize: 13)),
@@ -729,7 +1029,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
                             return Container(
                               width: roleW, height: cellH,
                               padding: const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(border: Border(right: borderSide)),
+                              decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFF2A2A2A)))),
                               child: TextField(
                                 controller: role.actorControllers[pi],
                                 textAlign: TextAlign.center,

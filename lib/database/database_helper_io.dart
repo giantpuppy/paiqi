@@ -43,7 +43,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -59,6 +59,11 @@ class DatabaseHelper {
     } catch (_) {}
     try {
       await db.execute('ALTER TABLE performances ADD COLUMN actual_price REAL');
+    } catch (_) {}
+
+    // v7: shows 表新增 cover_path 字段
+    try {
+      await db.execute('ALTER TABLE shows ADD COLUMN cover_path TEXT');
     } catch (_) {}
 
     // v6: 添加知识库表
@@ -96,6 +101,7 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         theater TEXT,
+        cover_path TEXT,
         created_at TEXT
       )
     ''');
@@ -317,11 +323,29 @@ class DatabaseHelper {
     return db.delete('actors', where: 'id = ?', whereArgs: [id]);
   }
 
+  // ========== Transaction: replace all performances for a show ==========
+  Future<void> replaceAllPerformances(int showId, List<Map<String, dynamic>> perfDataList) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      // 1. 删除该剧目所有旧场次（CASCADE 会自动删除关联的 cast_members）
+      await txn.delete('performances', where: 'show_id = ?', whereArgs: [showId]);
+      // 2. 批量插入新场次 + 卡司
+      for (final data in perfDataList) {
+        final perf = data['performance'] as Performance;
+        final casts = data['casts'] as List<CastMember>;
+        final perfId = await txn.insert('performances', perf.toMap());
+        for (final cast in casts) {
+          await txn.insert('cast_members', cast.copyWith(performanceId: perfId).toMap());
+        }
+      }
+    });
+  }
+
   // ========== Complex Queries ==========
   Future<List<Map<String, dynamic>>> getPerformancesWithShowByDate(String date) async {
     final db = await instance.database;
     final result = await db.rawQuery('''
-      SELECT p.*, s.name as show_name, s.theater
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
       FROM performances p
       JOIN shows s ON p.show_id = s.id
       WHERE p.date = ?
@@ -333,7 +357,7 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getAllPerformancesWithShow() async {
     final db = await instance.database;
     final result = await db.rawQuery('''
-      SELECT p.*, s.name as show_name, s.theater
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
       FROM performances p
       JOIN shows s ON p.show_id = s.id
       ORDER BY p.date ASC, p.time ASC
@@ -344,7 +368,7 @@ class DatabaseHelper {
   Future<Map<String, dynamic>?> getPerformanceDetail(int performanceId) async {
     final db = await instance.database;
     final result = await db.rawQuery('''
-      SELECT p.*, s.name as show_name, s.theater
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
       FROM performances p
       JOIN shows s ON p.show_id = s.id
       WHERE p.id = ?

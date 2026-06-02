@@ -3,7 +3,7 @@
 > **版本**: v1.0  
 > **日期**: 2026/06/01  
 > **状态**: 开发中（MVP 已完成，UI 优化进行中）  
-> **上次更新**: 2026/06/01 — 年历日期网格改用 Table 组件，根治溢出
+> **上次更新**: 2026/06/02 — 剧场流时间轴重构 + 海报封面 + AddShowScreen 三模式重构
 
 ---
 
@@ -11,6 +11,10 @@
 
 | 日期 | 改动内容 | 关联文件/模块 |
 |------|---------|-------------|
+| 2026/06/02 | 排期页重构为"剧场流时间轴"：双指缩放切换 3天/7天视图、海报卡片、Sticky Header、+号分流弹窗 | `gantt_screen.dart` |
+| 2026/06/02 | AddShowScreen 重构：支持手动/OCR/编辑三模式、3:4海报封面、暗黑CupertinoDatePicker、事务级保存 | `add_show_screen.dart` |
+| 2026/06/02 | 数据库升级 v7：shows 表新增 cover_path 字段、replaceAllPerformances 事务方法、JOIN查询补充 cover_path | `database_helper_io.dart`, `database_helper_web.dart`, `show.dart` |
+| 2026/06/02 | 新增海报工具类：图片持久化到 documents/covers/、非法字符过滤、编辑改名联动 | `utils/cover_helper.dart` |
 | 2026/06/01 | 根治年历溢出：Table + 压缩内部尺寸 + 增大卡片高度 (0.78→0.70) | `year_calendar_screen.dart` |
 | 2026/06/01 | 年历日期网格改用 Table 组件 | `year_calendar_screen.dart` |
 | 2026/06/01 | 年历视图 redesign：3×4 网格、全年数据加载、状态色块（金/绿/紫）、数量标注 | `year_calendar_screen.dart` |

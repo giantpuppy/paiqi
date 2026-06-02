@@ -53,6 +53,9 @@ class _WebDB {
             if (entry.key == 'cast_members' && !row.containsKey('is_featured')) {
               row['is_featured'] = 0;
             }
+            if (entry.key == 'shows' && !row.containsKey('cover_path')) {
+              row['cover_path'] = null;
+            }
             return row;
           }).toList();
           _tables[entry.key] = rows;
@@ -300,6 +303,7 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         theater TEXT,
+        cover_path TEXT,
         created_at TEXT
       )
     ''');
@@ -508,10 +512,27 @@ class DatabaseHelper {
     return db.delete('actors', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> replaceAllPerformances(int showId, List<Map<String, dynamic>> perfDataList) async {
+    final db = await instance.database;
+    await db.delete('performances', where: 'show_id = ?', whereArgs: [showId]);
+    for (final data in perfDataList) {
+      final perf = data['performance'] as Performance;
+      final casts = data['casts'] as List<CastMember>;
+      final perfMap = perf.toMap();
+      perfMap.remove('id');
+      final perfId = await db.insert('performances', perfMap);
+      for (final cast in casts) {
+        final castMap = cast.copyWith(performanceId: perfId).toMap();
+        castMap.remove('id');
+        await db.insert('cast_members', castMap);
+      }
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getPerformancesWithShowByDate(String date) async {
     final db = await instance.database;
     return db.rawQuery(
-      'SELECT p.*, s.name as show_name, s.theater FROM performances p JOIN shows s ON p.show_id = s.id WHERE p.date = ? ORDER BY p.time ASC',
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id WHERE p.date = ? ORDER BY p.time ASC',
       [date],
     );
   }
@@ -519,14 +540,14 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getAllPerformancesWithShow() async {
     final db = await instance.database;
     return db.rawQuery(
-      'SELECT p.*, s.name as show_name, s.theater FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY p.date ASC, p.time ASC',
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY p.date ASC, p.time ASC',
     );
   }
 
   Future<Map<String, dynamic>?> getPerformanceDetail(int performanceId) async {
     final db = await instance.database;
     final result = await db.rawQuery(
-      'SELECT p.*, s.name as show_name, s.theater FROM performances p JOIN shows s ON p.show_id = s.id WHERE p.id = ?',
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id WHERE p.id = ?',
       [performanceId],
     );
     if (result.isNotEmpty) return result.first;
