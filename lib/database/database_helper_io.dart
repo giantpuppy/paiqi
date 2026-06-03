@@ -365,6 +365,20 @@ class DatabaseHelper {
     return result;
   }
 
+  /// 查询某个月份的所有演出（含剧目信息），用于月度管理工作台
+  Future<List<Map<String, dynamic>>> getPerformancesByMonth(int year, int month) async {
+    final db = await instance.database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final result = await db.rawQuery('''
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
+      FROM performances p
+      JOIN shows s ON p.show_id = s.id
+      WHERE p.date LIKE ?
+      ORDER BY s.name ASC, p.date ASC, p.time ASC
+    ''', ['$year-$monthStr%']);
+    return result;
+  }
+
   Future<Map<String, dynamic>?> getPerformanceDetail(int performanceId) async {
     final db = await instance.database;
     final result = await db.rawQuery('''

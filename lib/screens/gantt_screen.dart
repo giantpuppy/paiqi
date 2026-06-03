@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import '../database/database_helper.dart';
@@ -10,6 +12,7 @@ import '../utils/ocr_service.dart';
 import '../utils/knowledge_base.dart';
 import '../models/actor.dart';
 import 'add_show_screen.dart';
+import 'monthly_workbench_screen.dart';
 
 enum PerformanceStatus { unmarked, wantToSee, bought }
 
@@ -87,17 +90,82 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
   bool _isLoading = true;
 
   TimelineMode _mode = TimelineMode.focus3Day;
-  DateTime _anchorDate = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-  double _scaleAccumulator = 0;
+
+  // 连续滚动
+  late List<DateTime> _days;
+  final ScrollController _scrollController = ScrollController();
+  bool _isLoadingMore = false;
+  bool _isSnapping = false;
+  Timer? _snapTimer;
+  bool _isTransitioning = false; // 模式切换过渡中，封锁重复切换
+  bool _justSwitched = false;     // 刚刚切换完，短暂封锁磁吸避免干扰
+
+  // 动态行高：由 LayoutBuilder 实时更新
+  double _availableHeight = 800.0; // 默认值，首次布局后更新
+
+  // 左上角月份标题，随滚动实时更新
+  final ValueNotifier<String> _monthTitle = ValueNotifier('');
+
+  double get _focusRowHeight => _availableHeight / 3;
+  double get _microRowHeight => _availableHeight / 7;
+  double get _currentRowHeight => _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
+
+  static const double _labelWidth = 64.0;
+  static const double _microLabelWidth = 48.0;
 
   final DateFormat _fullDateFormat = DateFormat('yyyy-MM-dd');
-  static const double _stickyHeaderHeight = 44.0;
-  static const double _tableLineOpacity = 0.06;
 
   @override
   void initState() {
     super.initState();
+    _initDays();
     _loadData();
+    _scrollController.addListener(_onScroll);
+    _scrollController.addListener(_updateMonthTitle);
+  }
+
+  void _updateMonthTitle() {
+    if (!_scrollController.hasClients || _days.isEmpty) return;
+    final idx = (_scrollController.offset / _currentRowHeight).floor().clamp(0, _days.length - 1);
+    final d = _days[idx];
+    _monthTitle.value = '${d.year}年${d.month}月';
+  }
+
+  /// 初始化日期列表：今天前30天 + 后60天
+  void _initDays() {
+    final today = DateTime.now();
+    final start = today.subtract(const Duration(days: 30));
+    _days = List.generate(91, (i) => DateTime(start.year, start.month, start.day + i));
+  }
+
+  /// 滚动到顶部/底部时追加更多天
+  void _onScroll() {
+    if (_isLoadingMore || _isSnapping || _isTransitioning) return;
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      _appendDays();
+    } else if (_scrollController.position.pixels <= 200) {
+      _prependDays();
+    }
+  }
+
+  void _appendDays() {
+    _isLoadingMore = true;
+    final lastDay = _days.last;
+    final newDays = List.generate(30, (i) => DateTime(lastDay.year, lastDay.month, lastDay.day + i + 1));
+    setState(() => _days.addAll(newDays));
+    _isLoadingMore = false;
+  }
+
+  void _prependDays() {
+    _isLoadingMore = true;
+    final firstDay = _days.first;
+    final newDays = List.generate(30, (i) => DateTime(firstDay.year, firstDay.month, firstDay.day - 30 + i));
+    final offsetBefore = _scrollController.offset;
+    setState(() => _days.insertAll(0, newDays));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollController.jumpTo(offsetBefore + 30 * _currentRowHeight);
+      _isLoadingMore = false;
+    });
   }
 
   Future<void> _loadData() async {
@@ -115,39 +183,40 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
         _castMap = castMap;
         _isLoading = false;
       });
+      // 数据加载完成后，滚动到今天为第一个可见行
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(30 * _currentRowHeight);
+          _updateMonthTitle();
+        }
+      });
     }
+  }
+
+  @override
+  void dispose() {
+    _snapTimer?.cancel();
+    _monthTitle.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
-  int get _dayCount => _mode == TimelineMode.focus3Day ? 3 : 7;
-
-  DateTime get _viewStart {
-    // 对齐到周一起始（7天模式）或 anchorDate（3天模式）
-    if (_mode == TimelineMode.micro7Day) {
-      final d = _anchorDate;
-      return d.subtract(Duration(days: d.weekday - 1));
-    }
-    return _anchorDate;
-  }
-
-  void _prevPeriod() {
-    setState(() {
-      _anchorDate = _anchorDate.subtract(Duration(days: _dayCount));
-    });
-  }
-
-  void _nextPeriod() {
-    setState(() {
-      _anchorDate = _anchorDate.add(Duration(days: _dayCount));
-    });
-  }
-
+  /// 回到今天：重置列表，今天为第一个可见行
   void _goToToday() {
+    final today = DateTime.now();
+    final start = today.subtract(const Duration(days: 30));
     setState(() {
-      _anchorDate = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+      _days = List.generate(91, (i) => DateTime(start.year, start.month, start.day + i));
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(30 * _currentRowHeight);
+        _updateMonthTitle();
+      }
     });
   }
 
@@ -623,15 +692,43 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
-    final monthStr = '${_anchorDate.year}年${_anchorDate.month}月';
-
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
         foregroundColor: Colors.white,
         centerTitle: false,
-        title: Text(monthStr, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        title: _buildMonthTitle(),
         actions: [
+          // 视图密度切换
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: animation,
+                  child: child,
+                ),
+              );
+            },
+            child: IconButton(
+              key: ValueKey<TimelineMode>(_mode),
+              onPressed: () => _switchMode(
+                _mode == TimelineMode.focus3Day
+                    ? TimelineMode.micro7Day
+                    : TimelineMode.focus3Day,
+              ),
+              icon: Icon(
+                _mode == TimelineMode.focus3Day
+                    ? Icons.density_medium
+                    : Icons.density_small,
+                color: const Color(0xFF6B5BCD),
+              ),
+              tooltip: _mode == TimelineMode.focus3Day
+                  ? '切换到 7 天宏观模式'
+                  : '切换到 3 天聚焦模式',
+            ),
+          ),
           Container(
             margin: const EdgeInsets.only(right: 12),
             decoration: BoxDecoration(
@@ -670,192 +767,238 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
     );
   }
 
-  // ==================== 剧场流时间轴 ====================
+  // ==================== 动态月份标题 ====================
 
-  String _dayLabel(DateTime day) {
-    final weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    final today = DateTime.now();
-    final tomorrow = today.add(const Duration(days: 1));
-    String extra = '';
-    if (_isSameDay(day, today)) {
-      extra = ' 今天';
-    } else if (_isSameDay(day, tomorrow)) {
-      extra = ' 明天';
-    }
-    return '${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}\n${weekdays[day.weekday - 1]}$extra';
-  }
-
-  Widget _buildTimeline() {
-    final today = DateTime.now();
-    final days = List.generate(_dayCount, (i) => _viewStart.add(Duration(days: i)));
-
-    return GestureDetector(
-      onScaleUpdate: (details) {
-        if (details.pointerCount >= 2) {
-          _scaleAccumulator += (details.scale - 1.0);
-          if (_scaleAccumulator > 0.3 && _mode == TimelineMode.micro7Day) {
-            setState(() {
-              _mode = TimelineMode.focus3Day;
-              _scaleAccumulator = 0;
-            });
-          } else if (_scaleAccumulator < -0.3 && _mode == TimelineMode.focus3Day) {
-            setState(() {
-              _mode = TimelineMode.micro7Day;
-              _scaleAccumulator = 0;
-            });
-          }
-        }
-      },
-      onScaleEnd: (_) {
-        _scaleAccumulator = 0;
-      },
-      child: GestureDetector(
-        onHorizontalDragEnd: (details) {
-          if (details.primaryVelocity != null) {
-            if (details.primaryVelocity! > 200) {
-              _prevPeriod();
-            } else if (details.primaryVelocity! < -200) {
-              _nextPeriod();
-            }
-          }
-        },
-        child: _mode == TimelineMode.focus3Day
-            ? _buildFocusLayout(days, today)
-            : _buildMicroLayout(days, today),
+  void _openMonthlyWorkbench(int year, int month) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MonthlyWorkbenchScreen(year: year, month: month),
       ),
     );
+    if (result == true) {
+      _loadData();
+    }
   }
 
-  /// 3天聚焦模式：Column 等分，不滚动
-  Widget _buildFocusLayout(List<DateTime> days, DateTime today) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final rHeight = constraints.maxHeight / _dayCount;
-        return Column(
-          children: List.generate(_dayCount, (index) {
-            final day = days[index];
-            final dayPerfs = _getPerformancesForDay(day);
-            return _buildFocusDayRow(day, dayPerfs, today, rHeight);
-          }),
+  Widget _buildMonthTitle() {
+    return ValueListenableBuilder<String>(
+      valueListenable: _monthTitle,
+      builder: (context, title, child) {
+        return GestureDetector(
+          onTap: () {
+            final parts = title.split('年');
+            if (parts.length == 2) {
+              final year = int.tryParse(parts[0]);
+              final month = int.tryParse(parts[1].replaceFirst('月', ''));
+              if (year != null && month != null) {
+                _openMonthlyWorkbench(year, month);
+              }
+            }
+          },
+          child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         );
       },
     );
   }
 
-  /// 7天微模式：ListView 可滚动，日期标签锁定左侧
-  Widget _buildMicroLayout(List<DateTime> days, DateTime today) {
-    return ListView.builder(
-      padding: EdgeInsets.zero,
-      itemCount: _dayCount,
-      itemBuilder: (context, index) {
-        final day = days[index];
-        final dayPerfs = _getPerformancesForDay(day);
-        return _buildMicroDayRow(day, dayPerfs, today, 90.0);
+  // ==================== 剧场流时间轴 ====================
+
+  Widget _buildTimeline() {
+    final today = DateTime.now();
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is ScrollEndNotification && !_isSnapping && !_isTransitioning && !_justSwitched) {
+          _snapTimer?.cancel();
+          _snapTimer = Timer(const Duration(milliseconds: 150), _snapToNearestRow);
+        }
+        return false;
       },
-    );
-  }
-
-  // ==================== 日期行：左侧标签 + 右侧卡片 ====================
-
-  Widget _buildDayLabel(DateTime day, double height, {required bool isToday}) {
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
-    final isTomorrow = _isSameDay(day, tomorrow);
-    final weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-
-    return Container(
-      width: 64,
-      height: height,
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        border: Border(
-          right: BorderSide(color: Colors.white.withOpacity(0.1), width: 0.5),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: isToday ? const Color(0xFFF54A45) : Colors.white.withOpacity(0.9),
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            weekdays[day.weekday - 1],
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w500,
-              color: isToday ? const Color(0xFFF54A45).withOpacity(0.7) : const Color(0xFF6B7280),
-            ),
-          ),
-          if (isToday || isTomorrow) ...[
-            const SizedBox(height: 3),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              decoration: BoxDecoration(
-                color: isToday
-                    ? const Color(0xFFF54A45).withOpacity(0.15)
-                    : const Color(0xFF6B5BCD).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                isToday ? '今天' : '明天',
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
-                  color: isToday ? const Color(0xFFF54A45) : const Color(0xFF6B5BCD),
-                ),
-              ),
-            ),
-          ],
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          _availableHeight = constraints.maxHeight;
+          return ListView.builder(
+            key: ValueKey<TimelineMode>(_mode),
+            controller: _scrollController,
+            padding: EdgeInsets.zero,
+            itemCount: _days.length,
+            itemBuilder: (context, index) {
+              return _buildDayRow(index, today);
+            },
+          );
+        },
       ),
     );
   }
 
-  // ==================== 模式 A：放大聚焦（3天） ====================
+  // ==================== 磁吸滚动 ====================
 
-  Widget _buildFocusDayRow(DateTime day, List<Map<String, dynamic>> dayPerfs, DateTime today, double rowHeight) {
+  void _snapToNearestRow() {
+    if (!_scrollController.hasClients || _isTransitioning || _justSwitched) return;
+    final offset = _scrollController.offset;
+    final targetIndex = (offset / _currentRowHeight).round().clamp(0, _days.length - 1);
+    final targetOffset = targetIndex * _currentRowHeight;
+
+    if ((offset - targetOffset).abs() > 2) {
+      _isSnapping = true;
+      _scrollController
+          .animateTo(targetOffset, duration: const Duration(milliseconds: 250), curve: Curves.easeOut)
+          .then((_) => _isSnapping = false);
+    }
+  }
+
+  // ==================== 丝滑模式切换 ====================
+
+  void _switchMode(TimelineMode newMode) {
+    if (_mode == newMode || _isTransitioning) return;
+
+    _snapTimer?.cancel();
+
+    // 保存切换前的关键状态
+    final previousOffset = _scrollController.offset;
+    final previousMode = _mode;
+
+    _isTransitioning = true;
+    setState(() => _mode = newMode);
+
+    // 所有计算和滚动调整在布局完成后执行，确保使用最新的行高和 maxScrollExtent
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        // 在 post frame 中重新计算行高，确保 _availableHeight 已更新
+        final oldRowHeight = previousMode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
+        final newRowHeight = _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
+
+        // 用 floor 更保守：确保视口顶部始终是同一个 item
+        final firstVisibleIndex = (previousOffset / oldRowHeight).floor().clamp(0, _days.length - 1);
+        final targetOffset = firstVisibleIndex * newRowHeight;
+
+        _scrollController.jumpTo(
+          targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+        );
+      }
+      // jumpTo 后强制 rebuild，让 _buildMonthTitle 使用新的 offset 计算正确月份
+      if (mounted) setState(() {});
+      _isTransitioning = false;
+      // 短暂标记刚刚切换完，阻止磁吸干扰 jumpTo 后的位置
+      _justSwitched = true;
+      Future.delayed(const Duration(milliseconds: 300), () => _justSwitched = false);
+    });
+  }
+
+  // ==================== 统一日期行（行高瞬间切换，避免 ListView 滚动冲突） ====================
+
+  Widget _buildDayRow(int index, DateTime today) {
+    final day = _days[index];
     final isToday = _isSameDay(day, today);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final cardWidth = (screenWidth - 64) * 0.45; // 减去左侧日期列 64px
-    final cardHeight = rowHeight - 24; // 上下留 padding
+    final dayPerfs = _getPerformancesForDay(day);
+    final isFocus = _mode == TimelineMode.focus3Day;
+    final targetHeight = isFocus ? _focusRowHeight : _microRowHeight;
 
     return Container(
-      height: rowHeight,
+      height: targetHeight,
       decoration: BoxDecoration(
+        color: isToday ? const Color(0xFFF54A45).withValues(alpha: 0.04) : const Color(0xFF121212),
         border: Border(
-          bottom: BorderSide(color: Colors.white.withOpacity(_tableLineOpacity)),
+          bottom: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
         ),
       ),
       child: Row(
         children: [
           // 左侧日期标签
-          _buildDayLabel(day, rowHeight, isToday: isToday),
-          // 右侧海报卡片
+          Container(
+            width: isFocus ? _labelWidth : _microLabelWidth,
+            height: targetHeight,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1A),
+              border: Border(right: BorderSide(color: Colors.white.withOpacity(0.1), width: 0.5)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 大日期：聚焦模式显示 MM-DD，微观模式显示几号
+                DefaultTextStyle(
+                  style: TextStyle(
+                    fontSize: isFocus ? 14 : 16,
+                    fontWeight: isFocus ? FontWeight.w700 : FontWeight.w800,
+                    color: isToday ? const Color(0xFFF54A45) : Colors.white.withOpacity(0.9),
+                  ),
+                  child: Text(isFocus
+                      ? '${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}'
+                      : '${day.day}'),
+                ),
+                const SizedBox(height: 2),
+                DefaultTextStyle(
+                  style: TextStyle(
+                    fontSize: isFocus ? 10 : 9,
+                    fontWeight: FontWeight.w500,
+                    color: isToday ? const Color(0xFFF54A45).withOpacity(0.7) : const Color(0xFF6B7280),
+                  ),
+                  child: Text(isFocus
+                      ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][day.weekday - 1]
+                      : '周${['一', '二', '三', '四', '五', '六', '日'][day.weekday - 1]}'),
+                ),
+                // 今天/明天标签（聚焦模式才显示）
+                Opacity(
+                  opacity: isFocus ? 1.0 : 0.0,
+                  child: _buildTodayBadge(day, isToday),
+                ),
+              ],
+            ),
+          ),
+          // 右侧内容区
           Expanded(
             child: dayPerfs.isEmpty
-                ? Center(
-                    child: Text(
-                      '',
-                      style: TextStyle(color: Colors.white.withOpacity(0.1), fontSize: 12),
-                    ),
-                  )
-                : ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                    itemCount: dayPerfs.length,
-                    itemBuilder: (context, index) {
-                      return _buildFocusCard(dayPerfs[index], cardWidth, cardHeight);
-                    },
-                  ),
+                ? const SizedBox()
+                : isFocus
+                    ? _buildFocusContent(dayPerfs, targetHeight)
+                    : _buildMicroContent(dayPerfs, targetHeight),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTodayBadge(DateTime day, bool isToday) {
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    final isTomorrow = _isSameDay(day, tomorrow);
+    if (!isToday && !isTomorrow) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: isToday
+              ? const Color(0xFFF54A45).withOpacity(0.15)
+              : const Color(0xFF6B5BCD).withOpacity(0.15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          isToday ? '今天' : '明天',
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            color: isToday ? const Color(0xFFF54A45) : const Color(0xFF6B5BCD),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ==================== 聚焦模式内容（大海报卡片） ====================
+
+  Widget _buildFocusContent(List<Map<String, dynamic>> dayPerfs, double rowHeight, {Key? key}) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final cardWidth = (screenWidth - _labelWidth) * 0.45;
+    final cardHeight = rowHeight - 24;
+
+    return ListView.builder(
+      key: key,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      itemCount: dayPerfs.length,
+      itemBuilder: (context, index) => _buildFocusCard(dayPerfs[index], cardWidth, cardHeight),
     );
   }
 
@@ -892,7 +1035,7 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                         ),
                       ),
                     ),
-              // 左上角时间胶囊
+              // 时间胶囊（淡入）
               if (time.isNotEmpty)
                 Positioned(
                   top: 8, left: 8,
@@ -906,10 +1049,10 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                       style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
                   ),
                 ),
-              // 底部渐变蒙层 + 文字
+              // 底部渐变蒙层
               Positioned(
                 left: 0, right: 0, bottom: 0,
-                height: cardHeight * 0.4, // 底部 40% 渐变蒙层
+                height: cardHeight * 0.4,
                 child: Container(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -920,25 +1063,29 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                   ),
                 ),
               ),
+              // 剧目名 + 卡司（淡入）
               Positioned(
                 left: 8, right: 8, bottom: 8,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(showName,
-                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 2),
-                    Text(
-                      [
-                        if (theater.isNotEmpty) theater,
-                        ...casts.map((c) => '${c.role}:${c.actorName}'),
-                      ].join(' · '),
-                      style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 10),
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                child: Opacity(
+                  opacity: cardHeight > 60 ? 1.0 : 0.0,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(showName,
+                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          if (theater.isNotEmpty) theater,
+                          ...casts.map((c) => '${c.role}:${c.actorName}'),
+                        ].join(' · '),
+                        style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 10),
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -948,78 +1095,15 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
     );
   }
 
-  // ==================== 模式 B：缩小微观（7天） ====================
+  // ==================== 微观模式内容（邮票墙） ====================
 
-  Widget _buildMicroDayRow(DateTime day, List<Map<String, dynamic>> dayPerfs, DateTime today, double rowHeight) {
-    final isToday = _isSameDay(day, today);
-    final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-
-    return Container(
-      height: rowHeight,
-      decoration: BoxDecoration(
-        color: isToday ? const Color(0xFFF54A45).withValues(alpha: 0.04) : const Color(0xFF121212),
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withOpacity(0.08), width: 0.5),
-        ),
-      ),
-      child: Row(
-        children: [
-          // 左侧锁定日期标签（深色背景，固定不滚动）
-          Container(
-            width: 48,
-            height: rowHeight,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A1A1A),
-              border: Border(
-                right: BorderSide(color: Colors.white.withOpacity(0.1), width: 0.5),
-              ),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${day.day}',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: isToday ? const Color(0xFFF54A45) : Colors.white.withOpacity(0.9),
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  '周${weekdays[day.weekday - 1]}',
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w500,
-                    color: isToday ? const Color(0xFFF54A45).withOpacity(0.7) : const Color(0xFF6B7280),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // 右侧微海报邮票墙
-          Expanded(
-            child: dayPerfs.isEmpty
-                ? Container(
-                    color: const Color(0xFF121212),
-                    alignment: Alignment.center,
-                    child: Text(
-                      '',
-                      style: TextStyle(color: Colors.white.withOpacity(0.08), fontSize: 10),
-                    ),
-                  )
-                : ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    itemCount: dayPerfs.length,
-                    itemBuilder: (context, index) {
-                      return _buildMicroCard(dayPerfs[index], rowHeight - 8);
-                    },
-                  ),
-          ),
-        ],
-      ),
+  Widget _buildMicroContent(List<Map<String, dynamic>> dayPerfs, double rowHeight, {Key? key}) {
+    return ListView.builder(
+      key: key,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      itemCount: dayPerfs.length,
+      itemBuilder: (context, index) => _buildMicroCard(dayPerfs[index], rowHeight - 8),
     );
   }
 
@@ -1041,7 +1125,6 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 微型海报背景
               coverPath != null && coverPath.isNotEmpty
                   ? Image.file(File(coverPath), fit: BoxFit.cover)
                   : Container(
@@ -1053,16 +1136,12 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                         ),
                       ),
                     ),
-              // 半透明遮罩 + 时间戳居中
               Container(
                 alignment: Alignment.center,
                 color: Colors.black.withOpacity(0.35),
                 child: Text(time,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
+                    color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 0.5,
                   )),
               ),
             ],
