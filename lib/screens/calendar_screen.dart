@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lunar/lunar.dart';
@@ -5,7 +6,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../database/database_helper.dart';
 import '../utils/page_transitions.dart';
 import '../widgets/animated_list_item.dart';
-import 'show_detail_screen.dart';
+import 'unified_show_detail_screen.dart';
 import 'year_calendar_screen.dart';
 
 enum CalendarFilter { all, wantToSee, bought, watched }
@@ -356,100 +357,157 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           final perf = entry.value;
                           final status = perf['status'] as String? ?? 'unmarked';
                           final statusColor = _statusColor(status);
+                          final coverPath = perf['cover_path'] as String?;
 
                           return AnimatedListItem(
                             index: index,
-                            child: Card(
-                              margin: const EdgeInsets.only(
-                                  bottom: 8, left: 12, right: 12),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 4,
-                                ),
-                                leading: Container(
-                                  width: 50,
-                                  height: 50,
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: statusColor.withValues(alpha: 0.3),
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  SlideFadeRoute(
+                                    page: UnifiedShowDetailScreen(
+                                      performanceId: perf['id'] as int,
                                     ),
                                   ),
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          perf['time']?.substring(0, 5) ?? '--:--',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: statusColor,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Icon(
-                                          _statusIcon(status),
-                                          size: 12,
-                                          color: statusColor,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                title: Text(
-                                  perf['show_name'] ?? '未知剧目',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  perf['theater'] ?? '未知剧场',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFFB3B3B3),
-                                  ),
-                                ),
-                                trailing: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    _statusLabel(status),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: statusColor,
-                                    ),
-                                  ),
-                                ),
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    SlideFadeRoute(
-                                      page: ShowDetailScreen(
-                                        performanceId: perf['id'] as int,
-                                      ),
-                                    ),
-                                  ).then((_) {
-                                    _loadPerformancesForDate(
-                                        _selectedDay ?? _focusedDay);
-                                    _loadEventsForMonth(_focusedDay);
-                                  });
-                                },
-                              ),
+                                ).then((_) {
+                                  _loadPerformancesForDate(
+                                      _selectedDay ?? _focusedDay);
+                                  _loadEventsForMonth(_focusedDay);
+                                });
+                              },
+                              child: _buildTicketCard(perf, status, statusColor, coverPath),
                             ),
                           );
                         }).toList(),
                       ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // 大麦风格票根卡片
+  Widget _buildTicketCard(Map<String, dynamic> perf, String status, Color statusColor, String? coverPath) {
+    final showName = perf['show_name'] ?? '未知剧目';
+    final theater = perf['theater'] ?? '未知剧场';
+    final date = perf['date'] ?? '';
+    final time = perf['time'] ?? '';
+    final seat = perf['seat'] as String? ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, left: 12, right: 12),
+      child: ClipPath(
+        clipper: _TicketClipper(),
+        child: Container(
+          height: 120,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              // 左侧：海报
+              Container(
+                width: 100,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  image: coverPath != null && coverPath.isNotEmpty
+                      ? DecorationImage(
+                          image: FileImage(File(coverPath)),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
+                ),
+                child: coverPath == null || coverPath.isEmpty
+                    ? Center(
+                        child: Text(
+                          showName.length >= 2 ? showName.substring(0, 2) : showName,
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: statusColor,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+              // 中间：信息区
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        showName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        theater,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF8A8F98),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today, size: 13, color: statusColor),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
+                              style: TextStyle(fontSize: 12, color: statusColor),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (seat.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Icon(Icons.event_seat, size: 13, color: statusColor),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(seat, style: TextStyle(fontSize: 12, color: statusColor), overflow: TextOverflow.ellipsis),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 右侧状态
+              Container(
+                width: 68,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(_statusIcon(status), size: 22, color: statusColor),
+                    const SizedBox(height: 8),
+                    Text(
+                      _statusLabel(status),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: statusColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -742,4 +800,67 @@ class _BreathingIconState extends State<_BreathingIcon>
       child: Icon(widget.icon, size: 72, color: const Color(0xFF4D4D4D)),
     );
   }
+}
+
+// 票根齿孔裁剪器
+class _TicketClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    const notchRadius = 10.0;
+    final notchCenterY = size.height / 2;
+
+    // 左上角圆角
+    path.moveTo(12, 0);
+    // 上边
+    path.lineTo(size.width - 12, 0);
+    // 右上角圆角
+    path.arcToPoint(
+      Offset(size.width, 12),
+      radius: const Radius.circular(12),
+    );
+    // 右边到上齿孔
+    path.lineTo(size.width, notchCenterY - notchRadius);
+    // 上齿孔（向内凹）
+    path.arcToPoint(
+      Offset(size.width, notchCenterY + notchRadius),
+      radius: const Radius.circular(notchRadius),
+      clockwise: false,
+    );
+    // 右边到下齿孔
+    path.lineTo(size.width, size.height - 12);
+    // 右下角圆角
+    path.arcToPoint(
+      Offset(size.width - 12, size.height),
+      radius: const Radius.circular(12),
+    );
+    // 下边
+    path.lineTo(12, size.height);
+    // 左下角圆角
+    path.arcToPoint(
+      Offset(0, size.height - 12),
+      radius: const Radius.circular(12),
+    );
+    // 左边到下齿孔
+    path.lineTo(0, notchCenterY + notchRadius);
+    // 下齿孔（向内凹）
+    path.arcToPoint(
+      Offset(0, notchCenterY - notchRadius),
+      radius: const Radius.circular(notchRadius),
+      clockwise: false,
+    );
+    // 左边到上
+    path.lineTo(0, 12);
+    // 左上角圆角
+    path.arcToPoint(
+      const Offset(12, 0),
+      radius: const Radius.circular(12),
+    );
+
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }

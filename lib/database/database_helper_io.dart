@@ -6,6 +6,7 @@ import '../models/cast_member.dart';
 import '../models/actor.dart';
 import '../models/ocr_correction.dart';
 import '../models/show_template.dart';
+import '../models/ticket.dart';
 
 class DatabaseHelper {
   static DatabaseHelper? _instance;
@@ -43,7 +44,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -64,6 +65,40 @@ class DatabaseHelper {
     // v7: shows 表新增 cover_path 字段
     try {
       await db.execute('ALTER TABLE shows ADD COLUMN cover_path TEXT');
+    } catch (_) {}
+
+    // v8: 添加查询索引
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_perf_date ON performances(date)');
+    } catch (_) {}
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_perf_show ON performances(show_id)');
+    } catch (_) {}
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_cast_perf ON cast_members(performance_id)');
+    } catch (_) {}
+
+    // v9: 新增 tickets 表，将 performances 上的 seat/price 迁移过去
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS tickets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          performance_id INTEGER NOT NULL,
+          seat TEXT,
+          price REAL,
+          actual_price REAL,
+          FOREIGN KEY (performance_id) REFERENCES performances (id) ON DELETE CASCADE
+        )
+      ''');
+    } catch (_) {}
+    // 迁移旧数据：将 performances 上的 seat/price/actual_price 复制到 tickets
+    try {
+      await db.execute('''
+        INSERT INTO tickets (performance_id, seat, price, actual_price)
+        SELECT id, seat, price, actual_price
+        FROM performances
+        WHERE seat IS NOT NULL OR price IS NOT NULL OR actual_price IS NOT NULL
+      ''');
     } catch (_) {}
 
     // v6: 添加知识库表
@@ -165,6 +200,23 @@ class DatabaseHelper {
         updated_at TEXT
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        performance_id INTEGER NOT NULL,
+        seat TEXT,
+        price REAL,
+        actual_price REAL,
+        FOREIGN KEY (performance_id) REFERENCES performances (id) ON DELETE CASCADE
+      )
+    ''');
+
+    // 索引：加速常用查询
+    await db.execute('CREATE INDEX idx_perf_date ON performances(date)');
+    await db.execute('CREATE INDEX idx_perf_show ON performances(show_id)');
+    await db.execute('CREATE INDEX idx_cast_perf ON cast_members(performance_id)');
+    await db.execute('CREATE INDEX idx_ticket_perf ON tickets(performance_id)');
   }
 
   Future close() async {
@@ -237,6 +289,18 @@ class DatabaseHelper {
     return result.map((json) => Performance.fromMap(json)).toList();
   }
 
+  /// 轻量查询：只返回某剧目下所有场次 id 列表
+  Future<List<int>> getPerformanceIdsByShowId(int showId) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'performances',
+      columns: ['id'],
+      where: 'show_id = ?',
+      whereArgs: [showId],
+    );
+    return result.map((row) => row['id'] as int).toList();
+  }
+
   Future<List<Performance>> getPerformancesByDateRange(String startDate, String endDate) async {
     final db = await instance.database;
     final result = await db.query(
@@ -282,6 +346,23 @@ class DatabaseHelper {
     return result.map((json) => CastMember.fromMap(json)).toList();
   }
 
+  /// 批量查询多个 performance 的卡司，避免 N+1 查询
+  Future<Map<int, List<CastMember>>> getCastMembersByPerformanceIds(List<int> ids) async {
+    if (ids.isEmpty) return {};
+    final db = await instance.database;
+    final placeholders = ids.map((_) => '?').join(',');
+    final result = await db.rawQuery(
+      'SELECT * FROM cast_members WHERE performance_id IN ($placeholders)',
+      ids,
+    );
+    final map = <int, List<CastMember>>{};
+    for (final row in result) {
+      final cm = CastMember.fromMap(row);
+      map.putIfAbsent(cm.performanceId, () => []).add(cm);
+    }
+    return map;
+  }
+
   Future<List<CastMember>> getAllCastMembers() async {
     final db = await instance.database;
     final result = await db.query('cast_members');
@@ -291,6 +372,38 @@ class DatabaseHelper {
   Future<int> deleteCastMembersByPerformanceId(int performanceId) async {
     final db = await instance.database;
     return db.delete('cast_members', where: 'performance_id = ?', whereArgs: [performanceId]);
+  }
+
+  // ========== Tickets ==========
+  Future<Ticket> createTicket(Ticket ticket) async {
+    final db = await instance.database;
+    final id = await db.insert('tickets', ticket.toMap());
+    return ticket.copyWith(id: id);
+  }
+
+  Future<List<Ticket>> getTicketsByPerformanceId(int performanceId) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'tickets',
+      where: 'performance_id = ?',
+      whereArgs: [performanceId],
+    );
+    return result.map((json) => Ticket.fromMap(json)).toList();
+  }
+
+  Future<int> updateTicket(Ticket ticket) async {
+    final db = await instance.database;
+    return db.update('tickets', ticket.toMap(), where: 'id = ?', whereArgs: [ticket.id]);
+  }
+
+  Future<int> deleteTicket(int id) async {
+    final db = await instance.database;
+    return db.delete('tickets', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteTicketsByPerformanceId(int performanceId) async {
+    final db = await instance.database;
+    return db.delete('tickets', where: 'performance_id = ?', whereArgs: [performanceId]);
   }
 
   // ========== Actors ==========
@@ -323,6 +436,11 @@ class DatabaseHelper {
     return db.delete('actors', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> updateActor(Actor actor) async {
+    final db = await instance.database;
+    return db.update('actors', actor.toMap(), where: 'id = ?', whereArgs: [actor.id]);
+  }
+
   // ========== Transaction: replace all performances for a show ==========
   Future<void> replaceAllPerformances(int showId, List<Map<String, dynamic>> perfDataList) async {
     final db = await instance.database;
@@ -333,9 +451,12 @@ class DatabaseHelper {
       for (final data in perfDataList) {
         final perf = data['performance'] as Performance;
         final casts = data['casts'] as List<CastMember>;
-        final perfId = await txn.insert('performances', perf.toMap());
+        // 清理 id 防止旧 id 冲突（与 web 端行为一致）
+        final perfMap = perf.toMap()..remove('id');
+        final perfId = await txn.insert('performances', perfMap);
         for (final cast in casts) {
-          await txn.insert('cast_members', cast.copyWith(performanceId: perfId).toMap());
+          final castMap = cast.copyWith(performanceId: perfId).toMap()..remove('id');
+          await txn.insert('cast_members', castMap);
         }
       }
     });
@@ -494,5 +615,10 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [template.id],
     );
+  }
+
+  Future<int> deleteShowTemplate(int id) async {
+    final db = await instance.database;
+    return db.delete('show_templates', where: 'id = ?', whereArgs: [id]);
   }
 }

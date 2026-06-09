@@ -6,7 +6,7 @@ class Performance {
   String? seat;
   double? price;     // 票面价格
   double? actualPrice; // 实付价格
-  String? status; // unmarked | want_to_see | bought
+  String? status; // unmarked | want_to_see | bought（watched 由 UI 层计算：bought + 日期已过）
   String? createdAt;
 
   Performance({

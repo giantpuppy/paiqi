@@ -297,7 +297,6 @@ class _LoginScreenState extends State<LoginScreen> {
         TextField(
           controller: _loginPassController,
           obscureText: true,
-          autofocus: true,
           decoration: InputDecoration(
             labelText: '$_selectedUser 的密码',
             prefixIcon: const Icon(Icons.lock_outline, size: 20),

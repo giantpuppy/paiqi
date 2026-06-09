@@ -12,6 +12,7 @@ import '../utils/ocr_service.dart';
 import '../utils/knowledge_base.dart';
 import '../models/actor.dart';
 import 'add_show_screen.dart';
+import 'unified_show_detail_screen.dart';
 import 'monthly_workbench_screen.dart';
 
 enum PerformanceStatus { unmarked, wantToSee, bought }
@@ -220,6 +221,85 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
     });
   }
 
+  /// 弹出年月选择器，选择后跳转到对应月份
+  void _pickYearMonth() async {
+    // 解析当前显示的年月
+    final parts = _monthTitle.value.split('年');
+    final currentYear = int.tryParse(parts[0]) ?? DateTime.now().year;
+    final currentMonth = int.tryParse(parts[1].replaceFirst('月', '')) ?? DateTime.now().month;
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(currentYear, currentMonth, 1),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      initialEntryMode: DatePickerEntryMode.calendar,
+      initialDatePickerMode: DatePickerMode.day,
+    );
+
+    if (picked != null && mounted) {
+      // 只取年月，跳转到该月第一天
+      _jumpToMonth(picked.year, picked.month);
+    }
+  }
+
+  /// 跳转到指定月份
+  void _jumpToMonth(int year, int month) {
+    // 查找该月份在 _days 中的第一天
+    final targetIndex = _days.indexWhere((d) => d.year == year && d.month == month);
+    if (targetIndex >= 0) {
+      // 已在列表中，直接滚动
+      _scrollController.animateTo(
+        targetIndex * _currentRowHeight,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    } else {
+      // 不在当前范围，重新生成日期列表并加载
+      _loadDataForMonth(year, month);
+    }
+  }
+
+  /// 重新生成日期列表，以目标月份为中心
+  Future<void> _loadDataForMonth(int year, int month) async {
+    final center = DateTime(year, month, 1);
+    final start = center.subtract(const Duration(days: 30));
+    final end = center.add(const Duration(days: 60));
+
+    setState(() {
+      _isLoading = true;
+      _days = [];
+      for (var d = start; !d.isAfter(end); d = d.add(const Duration(days: 1))) {
+        _days.add(d);
+      }
+    });
+
+    final db = DatabaseHelper.instance;
+    final performances = await db.getAllPerformancesWithShow();
+    final castMap = <int, List<CastMember>>{};
+    for (final perf in performances) {
+      final perfId = perf['id'] as int;
+      final casts = await db.getCastMembersByPerformanceId(perfId);
+      castMap[perfId] = casts;
+    }
+
+    if (mounted) {
+      setState(() {
+        _performances = performances;
+        _castMap = castMap;
+        _isLoading = false;
+      });
+      // 滚动到目标月份第一天
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final idx = _days.indexWhere((d) => d.year == year && d.month == month);
+        if (idx >= 0 && _scrollController.hasClients) {
+          _scrollController.jumpTo(idx * _currentRowHeight);
+          _updateMonthTitle();
+        }
+      });
+    }
+  }
+
   /// 获取某天的所有演出（含 show 信息）
   List<Map<String, dynamic>> _getPerformancesForDay(DateTime day) {
     final dateStr = _fullDateFormat.format(day);
@@ -323,210 +403,20 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
 
   // ==================== 详情面板 ====================
 
-  void _showPerformanceDetail(Map<String, dynamic> perf) {
-    final status = statusFromString(perf['status'] as String?);
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => _buildDetailSheet(perf, status),
-    );
-  }
-
-  Widget _buildDetailSheet(Map<String, dynamic> perf, PerformanceStatus status) {
-    final showName = perf['show_name'] as String? ?? '未知';
-    final theater = perf['theater'] as String? ?? '';
-    final date = perf['date'] as String? ?? '';
-    final time = perf['time'] as String? ?? '';
-    final seat = perf['seat'] as String? ?? '';
-    final price = perf['price'] != null ? '¥${perf['price']}' : '';
-    final actualPrice = perf['actual_price'] != null ? '¥${perf['actual_price']}' : '';
+  void _showPerformanceDetail(Map<String, dynamic> perf) async {
     final perfId = perf['id'] as int;
-    final casts = _castMap[perfId] ?? [];
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.65,
-      minChildSize: 0.3,
-      maxChildSize: 0.8,
-      expand: false,
-      builder: (context, scrollController) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4D4D4D),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(showName,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: status.color.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: status.color.withValues(alpha: 0.3)),
-                    ),
-                    child: Text(status.label,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: status.color)),
-                  ),
-                ],
-              ),
-              if (theater.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(children: [
-                    Icon(Icons.location_on_outlined, size: 18, color: const Color(0xFF8A8F98)),
-                    const SizedBox(width: 4),
-                    Text(theater, style: const TextStyle(color: Color(0xFFB3B3B3))),
-                  ]),
-                ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF181818),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Wrap(
-                  spacing: 16, runSpacing: 12,
-                  children: [
-                    _buildInfoItem(Icons.calendar_today, '日期', date),
-                    _buildInfoItem(Icons.access_time, '时间', time.isNotEmpty ? time : '未设置'),
-                    if (seat.isNotEmpty) _buildInfoItem(Icons.event_seat, '座位', seat),
-                    if (price.isNotEmpty) _buildInfoItem(Icons.confirmation_number_outlined, '票面', price),
-                    if (actualPrice.isNotEmpty) _buildInfoItem(Icons.payments_outlined, '实付', actualPrice),
-                  ],
-                ),
-              ),
-              if (casts.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                const Text('卡司', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFFB3B3B3))),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8, runSpacing: 8,
-                  children: casts.map((c) {
-                    final isFeatured = c.isFeatured == true;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isFeatured
-                            ? const Color(0xFF811FE2).withValues(alpha: 0.08)
-                            : const Color(0xFF252525),
-                        borderRadius: BorderRadius.circular(8),
-                        border: isFeatured
-                            ? Border.all(color: const Color(0xFF811FE2).withValues(alpha: 0.3))
-                            : null,
-                      ),
-                      child: Text('${c.role}: ${c.actorName}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isFeatured ? const Color(0xFF811FE2) : const Color(0xFFB3B3B3),
-                          fontWeight: isFeatured ? FontWeight.w600 : FontWeight.normal,
-                        )),
-                    );
-                  }).toList(),
-                ),
-              ],
-              const SizedBox(height: 20),
-              const Text('标记状态', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFFB3B3B3))),
-              const SizedBox(height: 12),
-              Row(children: [
-                _buildStatusButton(label: '想看', icon: Icons.star_border, color: PerformanceStatus.wantToSee.color, isActive: status == PerformanceStatus.wantToSee, onTap: () async { Navigator.pop(context); await _updateStatus(perfId, 'want_to_see'); }),
-                const SizedBox(width: 12),
-                _buildStatusButton(label: '已买', icon: Icons.check_circle_outline, color: PerformanceStatus.bought.color, isActive: status == PerformanceStatus.bought, onTap: () async { Navigator.pop(context); await _showBoughtForm(perfId); }),
-                const SizedBox(width: 12),
-                _buildStatusButton(label: '取消', icon: Icons.remove_circle_outline, color: PerformanceStatus.unmarked.color, isActive: status == PerformanceStatus.unmarked, onTap: () async { Navigator.pop(context); await _updateStatus(perfId, 'unmarked'); }),
-              ]),
-              const Spacer(),
-              Row(children: [
-                Expanded(child: OutlinedButton.icon(
-                  onPressed: () { Navigator.pop(context); _editShowFromPerf(perf); },
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  label: const Text('编辑'),
-                )),
-                const SizedBox(width: 12),
-                Expanded(child: OutlinedButton.icon(
-                  onPressed: () => _confirmDelete(perf),
-                  icon: Icon(Icons.delete_outline, size: 20, color: Colors.red[400]),
-                  label: Text('删除', style: TextStyle(color: Colors.red[400])),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red[400]),
-                )),
-              ]),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildStatusButton({required String label, required IconData icon, required Color color, required bool isActive, required VoidCallback onTap}) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: isActive ? color.withValues(alpha: 0.15) : const Color(0xFF1F1F1F),
-            borderRadius: BorderRadius.circular(500),
-            border: Border.all(color: isActive ? color : const Color(0xFF4D4D4D), width: isActive ? 1.5 : 1),
-          ),
-          child: Column(children: [
-            Icon(icon, color: isActive ? color : const Color(0xFF8A8F98), size: 22),
-            const SizedBox(height: 4),
-            Text(label, style: TextStyle(fontSize: 12, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal, color: isActive ? color : const Color(0xFF8A8F98))),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoItem(IconData icon, String label, String value) {
-    return Column(children: [
-      Icon(icon, size: 20, color: const Color(0xFF8A8F98)),
-      const SizedBox(height: 4),
-      Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF8A8F98))),
-      const SizedBox(height: 2),
-      Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-    ]);
-  }
-
-  // ==================== 编辑 / 删除 ====================
-
-  void _editShowFromPerf(Map<String, dynamic> perf) async {
-    final showId = perf['show_id'] as int;
-    final db = DatabaseHelper.instance;
-    final show = await db.getShowById(showId);
-    if (show == null || !mounted) return;
-
-    final perfs = await db.getPerformancesByShowId(showId);
-    // ignore: use_build_context_synchronously
     final result = await Navigator.push(
       context,
-      SlideFadeRoute(page: AddShowScreen(
-        initialShow: show,
-        initialPerformances: perfs,
-        isEditMode: true,
+      SlideFadeRoute(page: UnifiedShowDetailScreen(
+        performanceId: perfId,
       )),
     );
     if (result == true) {
       _loadData();
     }
   }
+
+  // ==================== 删除 ====================
 
   void _confirmDelete(Map<String, dynamic> perf) {
     showDialog(
@@ -736,7 +626,13 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
               borderRadius: BorderRadius.circular(12),
             ),
             child: IconButton(
-              onPressed: _showAddMenu,
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  SlideFadeRoute(page: const AddShowScreen()),
+                );
+                if (result == true) _loadData();
+              },
               icon: const Icon(Icons.add, size: 24),
               color: Colors.white,
               tooltip: '添加剧目',
@@ -785,18 +681,30 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
     return ValueListenableBuilder<String>(
       valueListenable: _monthTitle,
       builder: (context, title, child) {
-        return GestureDetector(
-          onTap: () {
-            final parts = title.split('年');
-            if (parts.length == 2) {
-              final year = int.tryParse(parts[0]);
-              final month = int.tryParse(parts[1].replaceFirst('月', ''));
-              if (year != null && month != null) {
-                _openMonthlyWorkbench(year, month);
-              }
-            }
-          },
-          child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 年月文字 → 点击弹出年月选择器进行跳转
+            GestureDetector(
+              onTap: _pickYearMonth,
+              child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 4),
+            // 管理台 icon
+            GestureDetector(
+              onTap: () {
+                final parts = title.split('年');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1].replaceFirst('月', ''));
+                  if (year != null && month != null) {
+                    _openMonthlyWorkbench(year, month);
+                  }
+                }
+              },
+              child: const Icon(Icons.calendar_month, size: 20, color: Color(0xFF9CA3AF)),
+            ),
+          ],
         );
       },
     );
@@ -950,7 +858,12 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
           // 右侧内容区
           Expanded(
             child: dayPerfs.isEmpty
-                ? const SizedBox()
+                ? (isFocus
+                    ? Center(
+                        child: Text('无排期',
+                          style: TextStyle(color: Colors.white.withOpacity(0.15), fontSize: 12)),
+                      )
+                    : const SizedBox())
                 : isFocus
                     ? _buildFocusContent(dayPerfs, targetHeight)
                     : _buildMicroContent(dayPerfs, targetHeight),
@@ -1010,7 +923,12 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
     final coverPath = perf['cover_path'] as String?;
     final color = _getShowColor(showId);
     final perfId = perf['id'] as int;
-    final casts = (_castMap[perfId] ?? []).where((c) => c.isFeatured == true).toList();
+    final status = perf['status'] as String? ?? 'unmarked';
+
+    // 卡司：全部显示
+    final allCasts = _castMap[perfId] ?? [];
+
+    final hasCover = coverPath != null && coverPath.isNotEmpty;
 
     return GestureDetector(
       onTap: () => _showPerformanceDetail(perf),
@@ -1023,67 +941,110 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 海报背景
-              coverPath != null && coverPath.isNotEmpty
-                  ? Image.file(File(coverPath), fit: BoxFit.cover)
-                  : Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [color, color.withOpacity(0.7)],
-                        ),
+              // Layer 1: 海报底图（无海报时用深色渐变）
+              if (hasCover)
+                Image.file(File(coverPath!), fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [color, _kCoverColors[(showId + 3) % _kCoverColors.length]],
                       ),
                     ),
-              // 时间胶囊（淡入）
-              if (time.isNotEmpty)
-                Positioned(
-                  top: 8, left: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.55),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text('🕒 $time',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                  ),
-                ),
-              // 底部渐变蒙层
-              Positioned(
-                left: 0, right: 0, bottom: 0,
-                height: cardHeight * 0.4,
-                child: Container(
+                  ))
+              else
+                Container(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black.withOpacity(0.88)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [color, _kCoverColors[(showId + 3) % _kCoverColors.length]],
                     ),
                   ),
                 ),
-              ),
-              // 剧目名 + 卡司（淡入）
-              Positioned(
-                left: 8, right: 8, bottom: 8,
-                child: Opacity(
-                  opacity: cardHeight > 60 ? 1.0 : 0.0,
+              // Layer 2: 全屏蒙版
+              Container(color: Colors.black.withOpacity(0.5)),
+              // Layer 3: 信息
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(showName,
-                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 2),
-                      Text(
-                        [
-                          if (theater.isNotEmpty) theater,
-                          ...casts.map((c) => '${c.role}:${c.actorName}'),
-                        ].join(' · '),
-                        style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 10),
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                      // 时间 + 状态
+                      Row(
+                        children: [
+                          if (time.isNotEmpty)
+                            Text('🕒 $time',
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                          const Spacer(),
+                          if (status == 'want_to_see' || status == 'bought')
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: status == 'bought'
+                                    ? const Color(0xFF34D399).withOpacity(0.85)
+                                    : const Color(0xFF811FE2).withOpacity(0.85),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                status == 'bought' ? '已买' : '想看',
+                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                        ],
                       ),
+                      // 剧名
+                      const SizedBox(height: 4),
+                      Text(showName,
+                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                      // 剧场
+                      if (theater.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(theater,
+                          style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 11),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ],
+                      // 卡司列表（可滚动）
+                      if (allCasts.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Expanded(
+                          child: ListView.builder(
+                            padding: EdgeInsets.zero,
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: allCasts.length,
+                            itemBuilder: (context, i) {
+                              final c = allCasts[i];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 1),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: Text(c.role,
+                                        style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10),
+                                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    ),
+                                    Text('|', style: TextStyle(color: Colors.white.withOpacity(0.25), fontSize: 10)),
+                                    Expanded(
+                                      flex: 3,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(left: 4),
+                                        child: Text(c.actorName,
+                                          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w500),
+                                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ] else
+                        const Spacer(),
                     ],
                   ),
                 ),

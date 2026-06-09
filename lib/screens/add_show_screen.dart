@@ -604,7 +604,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
         }
         await db.replaceAllPerformances(widget.initialShow!.id!, perfDataList);
       } else {
-        // 新增模式
+        // 新增模式：事务级保存
         final show = await db.createShow(Show(
           name: showName,
           theater: theater,
@@ -612,23 +612,16 @@ class _AddShowScreenState extends State<AddShowScreen> {
           createdAt: DateTime.now().toIso8601String(),
         ));
 
+        final perfDataList = <Map<String, dynamic>>[];
         for (int pi = 0; pi < _performances.length; pi++) {
           final perfEntry = _performances[pi];
-          final performance = await db.createPerformance(Performance(
-            showId: show.id!,
-            date: perfEntry.dateController.text,
-            time: perfEntry.time,
-            price: double.tryParse(perfEntry.priceController.text),
-            actualPrice: double.tryParse(perfEntry.actualPriceController.text),
-            status: 'unmarked',
-            createdAt: DateTime.now().toIso8601String(),
-          ));
+          final casts = <CastMember>[];
           for (final role in _roles) {
             final roleName = role.roleController.text.trim();
             final actorName = role.actorControllers[pi].text.trim();
             if (roleName.isNotEmpty && actorName.isNotEmpty) {
-              await db.createCastMember(CastMember(
-                performanceId: performance.id!,
+              casts.add(CastMember(
+                performanceId: 0,
                 role: roleName,
                 actorName: actorName,
                 isFeatured: false,
@@ -636,7 +629,20 @@ class _AddShowScreenState extends State<AddShowScreen> {
               ));
             }
           }
+          perfDataList.add({
+            'performance': Performance(
+              showId: show.id!,
+              date: perfEntry.dateController.text,
+              time: perfEntry.time,
+              price: double.tryParse(perfEntry.priceController.text),
+              actualPrice: double.tryParse(perfEntry.actualPriceController.text),
+              status: 'unmarked',
+              createdAt: DateTime.now().toIso8601String(),
+            ),
+            'casts': casts,
+          });
         }
+        await db.replaceAllPerformances(show.id!, perfDataList);
       }
 
       // 保存到知识库（如果数据来自OCR识别）
@@ -724,40 +730,54 @@ class _AddShowScreenState extends State<AddShowScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // 海报 + 剧目信息（上下叠放）
+            // 海报 + 剧目信息
             _buildHeaderSection(),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
+
+            // 排期场次标题
+            Row(
+              children: [
+                const Text('排期场次',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _addPerformance,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('添加场次'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
 
             // 表格
             _buildTable(),
 
-            const SizedBox(height: 16),
-            // 添加场次按钮
-            OutlinedButton.icon(
-              onPressed: _addPerformance,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('添加场次'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
+
             // OCR识别按钮
-            ElevatedButton.icon(
-              onPressed: _isRecognizing ? null : _pickImageAndRecognize,
-              icon: _isRecognizing
-                  ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.camera_alt, size: 18),
-              label: Text(_isRecognizing ? '识别中...' : '图片识别卡司'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6B5BCD),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isRecognizing ? null : _pickImageAndRecognize,
+                icon: _isRecognizing
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.document_scanner_outlined, size: 18),
+                label: Text(_isRecognizing ? '识别中...' : '图片识别卡司'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  side: const BorderSide(color: Color(0xFF3A3A3A)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
               ),
             ),
 
-            const SizedBox(height: 40),
+            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -775,9 +795,9 @@ class _AddShowScreenState extends State<AddShowScreen> {
           onTap: _pickCoverImage,
           child: Container(
             width: 90,
-            height: 120, // 3:4 比例
+            height: 120,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               color: _getCoverColor(),
               image: _coverPath != null && _coverPath!.isNotEmpty
                   ? DecorationImage(
@@ -787,46 +807,79 @@ class _AddShowScreenState extends State<AddShowScreen> {
                   : null,
             ),
             child: _coverPath == null || _coverPath!.isEmpty
-                ? Center(
-                    child: Text(
-                      _nameController.text.trim().isNotEmpty
-                          ? _nameController.text.trim().substring(0, _nameController.text.trim().length > 2 ? 2 : _nameController.text.trim().length)
-                          : '剧目',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                ? Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // 剧名首字
+                      Text(
+                        _nameController.text.trim().isNotEmpty
+                            ? _nameController.text.trim().substring(0,
+                                _nameController.text.trim().length > 2
+                                    ? 2
+                                    : _nameController.text.trim().length)
+                            : '',
+                        style: const TextStyle(
+                          color: Colors.white24,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
+                      // 相机图标
+                      Positioned(
+                        bottom: 6,
+                        right: 6,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black45,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Icon(Icons.camera_alt,
+                              size: 14, color: Colors.white70),
+                        ),
+                      ),
+                    ],
                   )
                 : null,
           ),
         ),
-        const SizedBox(width: 16),
-        // 右侧：剧目名称 + 演出地点纵向叠放
+        const SizedBox(width: 14),
+        // 右侧：剧目名称 + 演出地点
         Expanded(
           child: Column(
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: '剧目名称',
-                  hintText: '如：春逝',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                decoration: InputDecoration(
+                  hintText: '剧目名称',
+                  hintStyle: const TextStyle(color: Color(0xFF555555)),
+                  filled: true,
+                  fillColor: const Color(0xFF1F1F1F),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                 ),
+                style: const TextStyle(fontSize: 15),
                 validator: (v) => (v == null || v.trim().isEmpty) ? '必填' : null,
-                onChanged: (_) => setState(() {}), // 刷新海报文字
+                onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               TextFormField(
                 controller: _theaterController,
-                decoration: const InputDecoration(
-                  labelText: '演出地点',
-                  hintText: '如：国家话剧院',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                decoration: InputDecoration(
+                  hintText: '演出剧场',
+                  hintStyle: const TextStyle(color: Color(0xFF555555)),
+                  filled: true,
+                  fillColor: const Color(0xFF1F1F1F),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                 ),
+                style: const TextStyle(fontSize: 15),
               ),
             ],
           ),
@@ -867,16 +920,23 @@ class _AddShowScreenState extends State<AddShowScreen> {
   // ==================== 表格（弱边框高密度风格） ====================
 
   Widget _buildTable() {
-    const dateW = 58.0;
-    const timeW = 50.0;
+    const dateW = 62.0;
+    const timeW = 52.0;
     const roleW = 76.0;
-    const headerH = 34.0;
-    const cellH = 40.0;
-    const fixedW = dateW + timeW + 0.5; // +0.5 for right border
+    const headerH = 32.0;
+    const cellH = 38.0;
+    const fixedW = dateW + timeW + 0.5;
     const dividerColor = Color(0xFF222222);
     const headerBg = Color(0xFF1A1A1A);
 
-    return Row(
+    return Container(
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        color: const Color(0xFF181818),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF2A2A2A), width: 0.5),
+      ),
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 左侧固定：日期 + 时间
@@ -1063,7 +1123,8 @@ class _AddShowScreenState extends State<AddShowScreen> {
             ),
           ),
         ),
-      ],
+        ],
+      ),
     );
   }
 }
