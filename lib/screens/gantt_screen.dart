@@ -995,21 +995,9 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                             ),
                         ],
                       ),
-                      // 剧名
-                      const SizedBox(height: 4),
-                      Text(showName,
-                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                      // 剧场
-                      if (theater.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(theater,
-                          style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 11),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                      ],
-                      // 卡司列表（可滚动）
+                      // 卡司列表（视觉主体，上移）
                       if (allCasts.isNotEmpty) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 6),
                         Expanded(
                           child: ListView.builder(
                             padding: EdgeInsets.zero,
@@ -1018,22 +1006,22 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                             itemBuilder: (context, i) {
                               final c = allCasts[i];
                               return Padding(
-                                padding: const EdgeInsets.only(bottom: 1),
+                                padding: const EdgeInsets.only(bottom: 2),
                                 child: Row(
                                   children: [
                                     Expanded(
                                       flex: 2,
                                       child: Text(c.role,
-                                        style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10),
+                                        style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
                                         maxLines: 1, overflow: TextOverflow.ellipsis),
                                     ),
-                                    Text('|', style: TextStyle(color: Colors.white.withOpacity(0.25), fontSize: 10)),
+                                    Text('|', style: TextStyle(color: Colors.white.withOpacity(0.25), fontSize: 11)),
                                     Expanded(
                                       flex: 3,
                                       child: Padding(
                                         padding: const EdgeInsets.only(left: 4),
                                         child: Text(c.actorName,
-                                          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w500),
+                                          style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 11, fontWeight: FontWeight.w500),
                                           maxLines: 1, overflow: TextOverflow.ellipsis),
                                       ),
                                     ),
@@ -1045,6 +1033,17 @@ class _GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin
                         ),
                       ] else
                         const Spacer(),
+                      // 底部信息：无海报显示剧名，有海报只显示剧场
+                      if (!hasCover && showName != '未知') ...[
+                        Text(showName,
+                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                        if (theater.isNotEmpty) const SizedBox(height: 2),
+                      ],
+                      if (theater.isNotEmpty)
+                        Text(theater,
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
@@ -1277,85 +1276,141 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
       expand: false,
       builder: (context, scrollController) => Column(
         children: [
+          // 顶部拖拽条
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: const Color(0xFF4D4D4D), borderRadius: BorderRadius.circular(2))),
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: const Color(0xFF3A3A3A), borderRadius: BorderRadius.circular(2))),
           ),
+          // 剧目信息
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: _isEditing ? _buildEditForm() : _buildShowInfo(),
           ),
           const SizedBox(height: 12),
+          // 筛选栏
           _buildFilterBar(),
-          const Divider(height: 1),
+          const SizedBox(height: 8),
+          // 分隔线
+          Container(height: 0.5, color: Colors.white.withValues(alpha: 0.06)),
+          // 场次列表
           Expanded(
             child: _filteredPerformances.isEmpty
                 ? Center(child: Padding(
                     padding: const EdgeInsets.all(32),
-                    child: Text(_filter == _ShowFilter.all ? '暂无排期' : '暂无符合条件的排期', style: const TextStyle(color: Color(0xFF8A8F98))),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.event_busy, size: 40, color: Colors.white.withValues(alpha: 0.15)),
+                        const SizedBox(height: 12),
+                        Text(_filter == _ShowFilter.all ? '暂无排期' : '暂无符合条件的排期',
+                            style: const TextStyle(color: Color(0xFF8A8F98), fontSize: 14)),
+                      ],
+                    ),
                   ))
                 : ListView.builder(
                     controller: scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     itemCount: _filteredPerformances.length,
-                    itemBuilder: (context, index) {
-                      final perf = _filteredPerformances[index];
-                      final isWatched = _isWatched(perf);
-                      final status = statusFromString(perf.status);
-                      final displayLabel = isWatched ? '已观演' : status.label;
-                      final displayColor = isWatched ? const Color(0xFF9CA3AF) : status.color;
-                      final displayIcon = isWatched
-                          ? Icons.visibility
-                          : (perf.status == 'bought' ? Icons.check_circle : perf.status == 'want_to_see' ? Icons.star : Icons.circle_outlined);
-
-                      return ListTile(
-                        leading: CircleAvatar(
-                          radius: 18,
-                          backgroundColor: displayColor.withValues(alpha: 0.15),
-                          child: Icon(displayIcon, size: 18, color: displayColor),
-                        ),
-                        title: Text('${perf.date} ${perf.time?.substring(0, 5) ?? ''}', style: const TextStyle(fontWeight: FontWeight.w500)),
-                        subtitle: perf.seat != null && perf.seat!.isNotEmpty ? Text('座位: ${perf.seat}') : null,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _StatusBadge(label: displayLabel, color: displayColor, onTap: () => _toggleStatus(perf)),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 18),
-                              onPressed: () => _deletePerformance(perf.id!),
-                              color: Colors.red[300],
-                              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                            ),
-                          ],
-                        ),
-                        onTap: () => widget.onEditPerformance(perf.toMap()),
-                      );
-                    },
+                    itemBuilder: (context, index) => _buildPerfItem(_filteredPerformances[index]),
                   ),
           ),
+          // 底部删除按钮
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-            child: Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _deleteShow,
-                  icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[300]),
-                  label: Text('删除剧目', style: TextStyle(color: Colors.red[300])),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red[300], padding: const EdgeInsets.symmetric(vertical: 12)),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _deleteShow,
+                icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[300]),
+                label: Text('删除剧目', style: TextStyle(color: Colors.red[300])),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[300],
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  side: BorderSide(color: Colors.red.withValues(alpha: 0.3)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
-            ]),
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildPerfItem(Performance perf) {
+    final isWatched = _isWatched(perf);
+    final status = statusFromString(perf.status);
+    final displayLabel = isWatched ? '已观演' : status.label;
+    final displayColor = isWatched ? const Color(0xFF9CA3AF) : status.color;
+    final displayIcon = isWatched
+        ? Icons.visibility
+        : (perf.status == 'bought' ? Icons.check_circle : perf.status == 'want_to_see' ? Icons.star : Icons.circle_outlined);
+    final timeStr = perf.time?.substring(0, 5) ?? '';
+
+    return GestureDetector(
+      onTap: () => widget.onEditPerformance(perf.toMap()),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            // 状态图标
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: displayColor.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(displayIcon, size: 18, color: displayColor),
+            ),
+            const SizedBox(width: 12),
+            // 日期时间 + 座位
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(perf.date, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white)),
+                      if (timeStr.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(timeStr, style: TextStyle(fontSize: 14, color: displayColor, fontWeight: FontWeight.w600)),
+                      ],
+                    ],
+                  ),
+                  if (perf.seat != null && perf.seat!.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text('座位: ${perf.seat}', style: const TextStyle(fontSize: 12, color: Color(0xFF8A8F98))),
+                  ],
+                ],
+              ),
+            ),
+            // 状态标签
+            _StatusBadge(label: displayLabel, color: displayColor, onTap: () => _toggleStatus(perf)),
+            const SizedBox(width: 4),
+            // 删除
+            GestureDetector(
+              onTap: () => _deletePerformance(perf.id!),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 16, color: Colors.white.withValues(alpha: 0.25)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildShowInfo() {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Column(
@@ -1364,14 +1419,54 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
               Text(_showName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               if (_showTheater != null && _showTheater!.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(_showTheater!, style: const TextStyle(fontSize: 13, color: Color(0xFF8A8F98))),
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF8A8F98)),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(_showTheater!,
+                            style: const TextStyle(fontSize: 13, color: Color(0xFF8A8F98)),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
                 ),
             ],
           ),
         ),
-        IconButton(icon: const Icon(Icons.edit_outlined, size: 20), onPressed: () => setState(() => _isEditing = true), tooltip: '编辑', constraints: const BoxConstraints(minWidth: 40, minHeight: 40)),
-        IconButton(icon: const Icon(Icons.add_circle_outline, size: 26), onPressed: () => widget.onQuickAdd(widget.showId), tooltip: '添加场次', color: const Color(0xFF6B5BCD), constraints: const BoxConstraints(minWidth: 44, minHeight: 44)),
+        // 编辑按钮
+        GestureDetector(
+          onTap: () => setState(() => _isEditing = true),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF8A8F98)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 添加场次按钮
+        GestureDetector(
+          onTap: () => widget.onQuickAdd(widget.showId),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6B5BCD).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add, size: 16, color: Color(0xFF6B5BCD)),
+                SizedBox(width: 4),
+                Text('添加', style: TextStyle(fontSize: 13, color: Color(0xFF6B5BCD), fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -1402,20 +1497,35 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: filters.map((f) {
           final isActive = _filter == f.$1;
+          final color = f.$3 ?? const Color(0xFF6B5BCD);
           return Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: ChoiceChip(
-              label: Text(f.$2),
-              selected: isActive,
-              onSelected: (_) => setState(() => _filter = f.$1),
-              selectedColor: f.$3?.withValues(alpha: 0.2) ?? const Color(0xFF6B5BCD).withValues(alpha: 0.2),
-              backgroundColor: const Color(0xFF1F1F1F),
-              side: BorderSide(color: isActive ? (f.$3 ?? const Color(0xFF6B5BCD)).withValues(alpha: 0.5) : const Color(0xFF2A2A2A)),
-              labelStyle: TextStyle(color: isActive ? (f.$3 ?? const Color(0xFF6B5BCD)) : const Color(0xFF8A8F98), fontWeight: isActive ? FontWeight.w600 : FontWeight.normal, fontSize: 12),
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () => setState(() => _filter = f.$1),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isActive ? color.withValues(alpha: 0.15) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isActive ? color.withValues(alpha: 0.4) : const Color(0xFF2A2A2A),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  f.$2,
+                  style: TextStyle(
+                    color: isActive ? color : const Color(0xFF8A8F98),
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
             ),
           );
         }).toList(),

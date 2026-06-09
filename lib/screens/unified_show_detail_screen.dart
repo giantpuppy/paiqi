@@ -125,7 +125,6 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
         status: _isPastDate(_selectedDate) ? 'watched' : 'bought',
       );
     } else {
-      // 没票了，回退到 unmarked
       _currentPerf = _currentPerf!.copyWith(status: 'unmarked');
     }
   }
@@ -335,7 +334,7 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
       backgroundColor: const Color(0xFF121212),
       body: CustomScrollView(
         slivers: [
-          // 海报蒙层 AppBar
+          // 海报 AppBar
           _buildSliverAppBar(),
           SliverToBoxAdapter(
             child: Padding(
@@ -343,6 +342,10 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 场次信息卡片
+                  _buildInfoCard(),
+                  const SizedBox(height: 16),
+
                   // 卡司区
                   _buildCastSection(),
                   const SizedBox(height: 16),
@@ -364,52 +367,37 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
     );
   }
 
-  // ==================== 海报蒙层 AppBar ====================
+  // ==================== SliverAppBar（海报蒙层） ====================
 
   Widget _buildSliverAppBar() {
-    final dateTime = DateTime.tryParse(_selectedDate);
-    final weekday =
-        dateTime != null ? DateFormat('EEEE', 'zh_CN').format(dateTime) : '';
     final starColor = _starColors[_status] ?? _starColors['unmarked']!;
 
     return SliverAppBar(
-      expandedHeight: 220,
+      expandedHeight: 200,
       pinned: true,
       backgroundColor: const Color(0xFF121212),
       leading: IconButton(
         icon: const Icon(Icons.arrow_back, color: Colors.white),
-        onPressed: () {
-          if (_hasChanges) {
-            showDialog(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('未保存的修改'),
-                content: const Text('是否保存？'),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      Navigator.pop(context);
-                    },
-                    child: const Text('不保存'),
-                  ),
-                  TextButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await _save();
-                      if (mounted) Navigator.pop(context, true);
-                    },
-                    child: const Text('保存'),
-                  ),
-                ],
-              ),
-            );
-          } else {
-            Navigator.pop(context);
-          }
-        },
+        onPressed: _onBackPressed,
       ),
+      title: Text(_show!.name,
+          style: const TextStyle(color: Colors.white, fontSize: 17)),
+      centerTitle: true,
       actions: [
+        // 状态星星
+        GestureDetector(
+          onTap: _toggleWantToSee,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.only(right: 4),
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: starColor.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.star_rounded, color: starColor, size: 22),
+          ),
+        ),
         IconButton(
           icon: const Icon(Icons.delete_outline, color: Colors.white70),
           onPressed: _deletePerformance,
@@ -437,100 +425,41 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
                 ),
               ),
             ),
-            // 底部信息
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 日期时间 + 状态星星
-                  Row(
-                    children: [
-                      // 日期时间（可点击编辑）
-                      GestureDetector(
-                        onTap: _pickDate,
-                        child: Text(
-                          '$weekday $_selectedDate',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      GestureDetector(
-                        onTap: _pickTime,
-                        child: Text(
-                          _selectedTime,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      // 状态星星
-                      GestureDetector(
-                        onTap: _toggleWantToSee,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: starColor.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.star_rounded,
-                            color: starColor,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  // 剧名
-                  Text(
-                    _show!.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  // 剧场
-                  if (_show!.theater != null && _show!.theater!.isNotEmpty)
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on_outlined,
-                            size: 14, color: Colors.white54),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            _show!.theater!,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 13,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
     );
+  }
+
+  void _onBackPressed() {
+    if (_hasChanges) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('未保存的修改'),
+          content: const Text('是否保存？'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+              },
+              child: const Text('不保存'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _save();
+                if (mounted) Navigator.pop(context, true);
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   Widget _buildPosterBackground() {
@@ -545,6 +474,182 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
       );
     }
     return _buildGradientFallback();
+  }
+
+  // ==================== 场次信息卡片 ====================
+
+  Widget _buildInfoCard() {
+    final dateTime = DateTime.tryParse(_selectedDate);
+    final weekday =
+        dateTime != null ? DateFormat('EEEE', 'zh_CN').format(dateTime) : '';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          // 左侧紫色窄条
+          Container(
+            width: 3,
+            decoration: const BoxDecoration(
+              color: Color(0xFF6B5BCD),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(12),
+                bottomLeft: Radius.circular(12),
+              ),
+            ),
+          ),
+          // 虚线分隔
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: SizedBox(
+              height: 100,
+              child: CustomPaint(
+                size: const Size(1, 100),
+                painter: _DashedLinePainter(),
+              ),
+            ),
+          ),
+          // 信息内容
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 日期时间行（可点击编辑）
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: _pickDate,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today,
+                                size: 14, color: Color(0xFF6B5BCD)),
+                            const SizedBox(width: 6),
+                            Text('$weekday $_selectedDate',
+                                style: const TextStyle(
+                                    fontSize: 13, color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      GestureDetector(
+                        onTap: _pickTime,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.access_time,
+                                size: 14, color: Color(0xFF6B5BCD)),
+                            const SizedBox(width: 6),
+                            Text(_selectedTime,
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  // 剧场
+                  if (_show!.theater != null && _show!.theater!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on_outlined,
+                            size: 14, color: Color(0xFF8A8F98)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(_show!.theater!,
+                              style: const TextStyle(
+                                  fontSize: 13, color: Color(0xFF8A8F98)),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ],
+                  // 座位（如果有）
+                  if (_seatController.text.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.event_seat,
+                            size: 14, color: Color(0xFF8A8F98)),
+                        const SizedBox(width: 6),
+                        Text(_seatController.text,
+                            style: const TextStyle(
+                                fontSize: 13, color: Color(0xFF8A8F98))),
+                      ],
+                    ),
+                  ],
+                  // 卡司头像行
+                  if (_castMembers.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _buildCastAvatars(),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCastAvatars() {
+    const avatarColors = [
+      Color(0xFF6B5BCD),
+      Color(0xFFE06B75),
+      Color(0xFF4ECDC4),
+      Color(0xFFFFB347),
+      Color(0xFF77DD77),
+      Color(0xFF89CFF0),
+    ];
+
+    return SizedBox(
+      height: 56,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _castMembers.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final cast = _castMembers[index];
+          final name = cast.actorName.isNotEmpty ? cast.actorName : '?';
+          final initial = name.substring(0, 1);
+          final color = avatarColors[index % avatarColors.length];
+
+          return Column(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: color.withValues(alpha: 0.2),
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 3),
+              SizedBox(
+                width: 42,
+                child: Text(
+                  name,
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildGradientFallback() {
@@ -599,14 +704,14 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
                 child: const Row(
                   children: [
                     Expanded(
-                        flex: 2,
                         child: Text('角色',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 11, fontWeight: FontWeight.w600,
                                 color: Color(0xFF8A8F98)))),
                     Expanded(
-                        flex: 3,
                         child: Text('演员',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 11, fontWeight: FontWeight.w600,
                                 color: Color(0xFF8A8F98)))),
@@ -630,16 +735,16 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                        flex: 2,
                         child: Text(
                           cast.role.isEmpty ? '-' : cast.role,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
                       Expanded(
-                        flex: 3,
                         child: Text(
                           cast.actorName.isEmpty ? '-' : cast.actorName,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
                               fontSize: 13, color: Colors.white),
                         ),
@@ -891,7 +996,7 @@ class _UnifiedShowDetailScreenState extends State<UnifiedShowDetailScreen> {
   }
 }
 
-// 虚线绘制器
+// 垂直虚线绘制器
 class _DashedLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {

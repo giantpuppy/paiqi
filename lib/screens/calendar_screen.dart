@@ -396,11 +396,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final seat = perf['seat'] as String? ?? '';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12, left: 12, right: 12),
+      padding: const EdgeInsets.only(bottom: 14, left: 12, right: 12),
       child: ClipPath(
         clipper: _TicketClipper(),
         child: Container(
-          height: 120,
+          height: 150,
           decoration: BoxDecoration(
             color: const Color(0xFF1E1E1E),
             borderRadius: BorderRadius.circular(14),
@@ -409,8 +409,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
             children: [
               // 左侧：海报
               Container(
-                width: 100,
-                height: 120,
+                width: 120,
+                height: 150,
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.15),
                   image: coverPath != null && coverPath.isNotEmpty
@@ -425,7 +425,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         child: Text(
                           showName.length >= 2 ? showName.substring(0, 2) : showName,
                           style: TextStyle(
-                            fontSize: 22,
+                            fontSize: 26,
                             fontWeight: FontWeight.bold,
                             color: statusColor,
                           ),
@@ -436,7 +436,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               // 中间：信息区
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -446,7 +446,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 17,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -488,17 +488,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
               // 右侧状态
               Container(
-                width: 68,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                width: 72,
+                padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(_statusIcon(status), size: 22, color: statusColor),
+                    Icon(_statusIcon(status), size: 26, color: statusColor),
                     const SizedBox(height: 8),
                     Text(
                       _statusLabel(status),
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: statusColor,
                       ),
@@ -807,7 +807,7 @@ class _TicketClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final path = Path();
-    const notchRadius = 10.0;
+    const notchRadius = 12.0;
     final notchCenterY = size.height / 2;
 
     // 左上角圆角

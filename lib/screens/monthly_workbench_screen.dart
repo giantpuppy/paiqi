@@ -56,7 +56,7 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
       case 'bought':
         return const Color(0xFF34D399);
       case 'want_to_see':
-        return const Color(0xFF6B5BCD);
+        return const Color(0xFF811FE2);
       default:
         return const Color(0xFF6B7280);
     }
@@ -65,11 +65,11 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
   String _getStatusLabel(String? status) {
     switch (status) {
       case 'bought':
-        return '已购';
+        return '已买';
       case 'want_to_see':
         return '想看';
       default:
-        return '未标';
+        return '未标记';
     }
   }
 
@@ -166,6 +166,7 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
 
   Widget _buildShowCard(String showName, List<Map<String, dynamic>> perfs) {
     final coverPath = perfs.first['cover_path'] as String?;
+    final theater = perfs.first['theater'] as String? ?? '';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -189,19 +190,40 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        showName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      // 剧名 + 剧场同行
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              showName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (theater.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                theater,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white.withOpacity(0.45),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${perfs.length} 场演出',
+                        '总共${perfs.length}场次',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.white.withOpacity(0.5),
@@ -243,10 +265,10 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
   Widget _buildPerformanceItem(Map<String, dynamic> perf) {
     final date = perf['date'] as String? ?? '';
     final time = (perf['time'] as String?)?.substring(0, 5) ?? '';
-    final theater = perf['theater'] as String? ?? '';
     final status = perf['status'] as String?;
     final seat = perf['seat'] as String?;
     final price = perf['price'] != null ? (perf['price'] as num).toDouble() : null;
+    final statusColor = _getStatusColor(status);
 
     return InkWell(
       onTap: () => _editPerformance(perf),
@@ -284,26 +306,17 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
                 ],
               ),
             ),
-            // 剧院 + 座位 + 价格
+            // 座位 + 价格
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    theater,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.white.withOpacity(0.8),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
                   if (seat != null && seat.isNotEmpty)
                     Text(
                       '座位: $seat',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 13,
+                        color: Colors.white.withOpacity(0.7),
                       ),
                     ),
                   if (price != null)
@@ -314,32 +327,63 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
                         color: Colors.white.withOpacity(0.4),
                       ),
                     ),
+                  if ((seat == null || seat.isEmpty) && price == null)
+                    Text(
+                      '点击编辑',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withOpacity(0.25),
+                      ),
+                    ),
                 ],
               ),
             ),
-            // 状态标签
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: _getStatusColor(status).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: _getStatusColor(status).withOpacity(0.3), width: 0.5),
-              ),
-              child: Text(
-                _getStatusLabel(status),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: _getStatusColor(status),
-                ),
+            // 状态：星星 icon + 文字
+            GestureDetector(
+              onTap: () {
+                // 循环切换状态: unmarked → want_to_see → bought → unmarked
+                final next = status == 'bought'
+                    ? 'unmarked'
+                    : status == 'want_to_see'
+                        ? 'bought'
+                        : 'want_to_see';
+                _toggleStatus(perf, next);
+              },
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    status == 'want_to_see' ? Icons.star_rounded : Icons.star_border_rounded,
+                    size: 18,
+                    color: statusColor,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _getStatusLabel(status),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: statusColor,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            // 编辑箭头
-            Icon(Icons.chevron_right, size: 18, color: Colors.white.withOpacity(0.3)),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _toggleStatus(Map<String, dynamic> perf, String newStatus) async {
+    final db = DatabaseHelper.instance;
+    final perfId = perf['id'] as int;
+    final performance = await db.getPerformanceById(perfId);
+    if (performance != null) {
+      await db.updatePerformance(performance.copyWith(status: newStatus));
+      setState(() {
+        perf['status'] = newStatus;
+      });
+    }
   }
 }
