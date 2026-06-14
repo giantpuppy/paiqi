@@ -1,11 +1,17 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:lunar/lunar.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../database/database_helper.dart';
 import '../utils/page_transitions.dart';
 import '../widgets/animated_list_item.dart';
+import '../widgets/breathing_icon.dart';
+import '../widgets/status_dot.dart';
+import '../widgets/ticket_clipper.dart';
+import '../widgets/today_spotlight.dart';
 import 'unified_show_detail_screen.dart';
 import 'year_calendar_screen.dart';
 
@@ -27,7 +33,13 @@ extension CalendarFilterExt on CalendarFilter {
 }
 
 class CalendarScreen extends StatefulWidget {
-  const CalendarScreen({super.key});
+  const CalendarScreen({
+    super.key,
+    this.onSelectedDayHasEvent,
+  });
+
+  /// 当选中日期是否包含剧目发生变化时回调（用于底部导航条上方光感分隔符）
+  final ValueChanged<bool>? onSelectedDayHasEvent;
 
   @override
   State<CalendarScreen> createState() => _CalendarScreenState();
@@ -37,14 +49,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   CalendarFormat _calendarFormat = CalendarFormat.month;
-  CalendarFilter _filter = CalendarFilter.all;
+  CalendarFilter _filter = CalendarFilter.bought;
   List<Map<String, dynamic>> _performances = [];
   Map<DateTime, List<Map<String, dynamic>>> _events = {};
   bool _isLoading = false;
+  bool _isCalendarExpanded = true;
+  final Map<DateTime, int> _posterRotationIndex = {};
 
   final DateFormat _dateFormat = DateFormat('yyyy-MM-dd');
   final DateFormat _displayFormat = DateFormat('yyyy年M月');
   final DateFormat _weekdayFormat = DateFormat('EEEE', 'zh_CN');
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -52,6 +67,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _selectedDay = _focusedDay;
     _loadEventsForMonth(_focusedDay);
     _loadPerformancesForDate(_focusedDay);
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
   }
 
   bool _shouldInclude(Map<String, dynamic> perf) {
@@ -59,7 +82,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (status == 'unmarked') return false;
     switch (_filter) {
       case CalendarFilter.all:
-        return status == 'want_to_see' || status == 'bought' || status == 'watched';
+        return status == 'want_to_see' ||
+            status == 'bought' ||
+            status == 'watched';
       case CalendarFilter.wantToSee:
         return status == 'want_to_see';
       case CalendarFilter.bought:
@@ -74,26 +99,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final endOfMonth = DateTime(month.year, month.month + 1, 0);
 
     final db = DatabaseHelper.instance;
-    final performances = await db.getPerformancesByDateRange(
+    final performances = await db.getPerformancesWithShowByDateRange(
       _dateFormat.format(startOfMonth),
       _dateFormat.format(endOfMonth),
     );
 
     final events = <DateTime, List<Map<String, dynamic>>>{};
     for (final p in performances) {
-      if (!_shouldInclude(p.toMap())) continue;
-      final dateStr = p.date;
+      if (!_shouldInclude(p)) continue;
+      final dateStr = p['date'] as String;
       final date = _dateFormat.parse(dateStr);
       final normalizedDate = DateTime(date.year, date.month, date.day);
       if (!events.containsKey(normalizedDate)) {
         events[normalizedDate] = [];
       }
-      events[normalizedDate]!.add(p.toMap());
+      events[normalizedDate]!.add(p);
     }
 
     setState(() {
       _events = events;
     });
+    _notifySelectedDayHasEvent();
   }
 
   Future<void> _loadPerformancesForDate(DateTime date) async {
@@ -107,31 +133,154 @@ class _CalendarScreenState extends State<CalendarScreen> {
       _performances = performances.where(_shouldInclude).toList();
       _isLoading = false;
     });
+    _notifySelectedDayHasEvent();
+  }
+
+  bool get _selectedDayHasEvent {
+    if (_selectedDay == null) return false;
+    final normalized = DateTime(
+      _selectedDay!.year,
+      _selectedDay!.month,
+      _selectedDay!.day,
+    );
+    return _events[normalized]?.isNotEmpty ?? false;
+  }
+
+  void _notifySelectedDayHasEvent() {
+    widget.onSelectedDayHasEvent?.call(_selectedDayHasEvent);
   }
 
   void _onVerticalSwipe(DragEndDetails details) {
     if (details.primaryVelocity == null) return;
     if (details.primaryVelocity! < -150) {
-      // 向上滑动：月 -> 双周 -> 周
-      setState(() {
-        if (_calendarFormat == CalendarFormat.month) {
-          _calendarFormat = CalendarFormat.twoWeeks;
-        } else if (_calendarFormat == CalendarFormat.twoWeeks) {
-          _calendarFormat = CalendarFormat.week;
-        }
-        _focusedDay = _selectedDay ?? _focusedDay;
-      });
+      // 向上滑动：折叠到周视图
+      _collapseCalendar();
     } else if (details.primaryVelocity! > 150) {
-      // 向下滑动：周 -> 双周 -> 月
-      setState(() {
-        if (_calendarFormat == CalendarFormat.week) {
-          _calendarFormat = CalendarFormat.twoWeeks;
-        } else if (_calendarFormat == CalendarFormat.twoWeeks) {
-          _calendarFormat = CalendarFormat.month;
-        }
-        _focusedDay = _selectedDay ?? _focusedDay;
-      });
+      // 向下滑动：展开到月视图
+      _expandCalendar();
     }
+  }
+
+  void _onScroll() {
+    // 折叠/展开不再由滚动位置自动触发，改由明确手势控制，避免状态抖动和弹回
+  }
+
+  void _expandCalendar() {
+    if (!_isCalendarExpanded) {
+      final oldHeight = _currentCalendarHeight(context);
+      setState(() {
+        _isCalendarExpanded = true;
+        _calendarFormat = CalendarFormat.month;
+      });
+      _syncScrollAfterCollapse(oldHeight);
+    }
+  }
+
+  void _collapseCalendar() {
+    if (_isCalendarExpanded) {
+      final oldHeight = _currentCalendarHeight(context);
+      setState(() {
+        _isCalendarExpanded = false;
+        _calendarFormat = CalendarFormat.week;
+      });
+      _syncScrollAfterCollapse(oldHeight);
+    }
+  }
+
+  void _toggleCalendarExpansion() {
+    if (_isCalendarExpanded) {
+      _collapseCalendar();
+    } else {
+      _expandCalendar();
+    }
+  }
+
+  /// 月历高度变化后，同步 scroll offset 以保持列表视觉位置不变
+  void _syncScrollAfterCollapse(double oldHeight) {
+    if (!_scrollController.hasClients) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+
+      final newHeight = _currentCalendarHeight(context);
+      final heightDelta = oldHeight - newHeight;
+      if (heightDelta.abs() < 0.5) return;
+
+      final currentOffset = _scrollController.offset;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      final targetOffset = (currentOffset + heightDelta).clamp(0.0, maxExtent);
+
+      if ((targetOffset - currentOffset).abs() > 0.5) {
+        _scrollController.jumpTo(targetOffset);
+      }
+    });
+  }
+
+  double _currentCalendarHeight(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    const appBarHeight = kToolbarHeight;
+    final weekdayHeaderHeight = screenSize.width * 0.085;
+    final expandedCalendarHeight = (screenSize.height -
+            statusBarHeight -
+            appBarHeight -
+            weekdayHeaderHeight) *
+        0.58;
+    return _isCalendarExpanded
+        ? expandedCalendarHeight
+        : _focusedRowHeight(context);
+  }
+
+  double _focusedRowHeight(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    // 周视图行高，给海报、日期圆标和 TableCalendar 内部边距留足空间
+    return (screenWidth * 0.22).clamp(80.0, 120.0);
+  }
+
+  double _calculateMonthRowHeight(BuildContext context,
+      {required double maxHeight}) {
+    // 月历总高度按 8 倍行高设计：6 行网格 + 2 行余量给 TableCalendar 内部边距
+    return maxHeight / 8;
+  }
+
+  void _onDaySelected(DateTime selectedDay) {
+    setState(() {
+      _selectedDay = selectedDay;
+      _focusedDay = selectedDay;
+    });
+    _loadPerformancesForDate(selectedDay);
+    _notifySelectedDayHasEvent();
+    if (!_isCalendarExpanded) {
+      _expandCalendar();
+    }
+  }
+
+  void _onHeaderHorizontalSwipe(DragEndDetails details) {
+    if (details.primaryVelocity == null) return;
+    if (details.primaryVelocity! > 50) {
+      // 右滑：上一月
+      HapticFeedback.lightImpact();
+      _changeMonth(-1);
+    } else if (details.primaryVelocity! < -50) {
+      // 左滑：下一月
+      HapticFeedback.lightImpact();
+      _changeMonth(1);
+    }
+  }
+
+  void _changeMonth(int delta) {
+    final newMonth = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + delta,
+      1,
+    );
+    setState(() {
+      _focusedDay = newMonth;
+      _selectedDay = newMonth;
+    });
+    _loadEventsForMonth(newMonth);
+    _loadPerformancesForDate(newMonth);
+    _notifySelectedDayHasEvent();
   }
 
   Color _statusColor(String status) {
@@ -139,14 +288,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
       'want_to_see' => const Color(0xFF811FE2),
       'watched' => const Color(0xFFD4A853),
       _ => const Color(0xFF34D399),
-    };
-  }
-
-  String _statusLabel(String status) {
-    return switch (status) {
-      'want_to_see' => '想看',
-      'watched' => '已看',
-      _ => '已买',
     };
   }
 
@@ -160,202 +301,288 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        centerTitle: false,
-        title: GestureDetector(
-          onTap: _showYearPicker,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _displayFormat.format(_focusedDay),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.keyboard_arrow_down, size: 20),
-            ],
-          ),
-        ),
-        actions: [
-          _buildFilterMenu(),
-        ],
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Column(
-          children: [
-            // Calendar (wrapped with GestureDetector for swipe-to-change-format)
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onVerticalDragEnd: _onVerticalSwipe,
-              child: Card(
-                margin: const EdgeInsets.all(12),
-                color: const Color(0xFF181818),
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: TableCalendar(
-                    firstDay: DateTime(2020),
-                    lastDay: DateTime(2030),
-                    focusedDay: _focusedDay,
-                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                    calendarFormat: _calendarFormat,
-                    availableCalendarFormats: const {
-                      CalendarFormat.month: '月',
-                      CalendarFormat.twoWeeks: '双周',
-                      CalendarFormat.week: '周',
-                    },
-                    availableGestures: AvailableGestures.horizontalSwipe,
-                    rowHeight: 64,
-                    eventLoader: (day) {
-                      final normalized = DateTime(day.year, day.month, day.day);
-                      return _events[normalized] ?? [];
-                    },
-                    onDaySelected: (selectedDay, focusedDay) {
-                      setState(() {
-                        _selectedDay = selectedDay;
-                        _focusedDay = focusedDay;
-                      });
-                      _loadPerformancesForDate(selectedDay);
-                    },
-                    onPageChanged: (focusedDay) {
-                      setState(() => _focusedDay = focusedDay);
-                      _loadEventsForMonth(focusedDay);
-                    },
-                    onFormatChanged: (format) {
-                      setState(() {
-                        _calendarFormat = format;
-                        _focusedDay = _selectedDay ?? _focusedDay;
-                      });
-                    },
-                    calendarBuilders: CalendarBuilders(
-                      dowBuilder: (context, day) {
-                        final weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-                        final isWeekend = day.weekday == DateTime.sunday || day.weekday == DateTime.saturday;
-                        return Center(
-                          child: Text(
-                            weekdays[day.weekday % 7],
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: isWeekend
-                                  ? const Color(0xFFB3B3B3)
-                                  : const Color(0xFF8A8F98),
-                            ),
-                          ),
-                        );
-                      },
-                      markerBuilder: (context, date, events) {
-                        if (events.isEmpty) return const SizedBox.shrink();
-                        return Positioned(
-                          bottom: 4,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: events.take(3).map((e) {
-                              final status = (e as Map<String, dynamic>)['status'] as String? ?? 'unmarked';
-                              final color = _statusColor(status);
-                              return Container(
-                                width: 6,
-                                height: 6,
-                                margin: const EdgeInsets.symmetric(horizontal: 1),
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  shape: BoxShape.circle,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        );
-                      },
-                      // 显示农历
-                      defaultBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, false),
-                      todayBuilder: (context, day, focusedDay) => _buildCalendarCell(day, true, false),
-                      selectedBuilder: (context, day, focusedDay) => _buildCalendarCell(day, false, true),
-                      outsideBuilder: (context, day, focusedDay) => const SizedBox.shrink(),
-                      disabledBuilder: (context, day, focusedDay) => const SizedBox.shrink(),
-                    ),
-                    calendarStyle: CalendarStyle(
-                      markerSize: 6,
-                      markersMaxCount: 3,
-                      outsideDaysVisible: false,
-                      defaultTextStyle: const TextStyle(color: Colors.white),
-                      weekendTextStyle: const TextStyle(color: Color(0xFFB3B3B3)),
-                      outsideTextStyle: const TextStyle(color: Color(0xFF444444)),
-                      todayDecoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                        shape: BoxShape.circle,
-                      ),
-                      selectedDecoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    startingDayOfWeek: StartingDayOfWeek.monday,
-                    headerVisible: false,
-                    locale: 'zh_CN',
-                  ),
-                ),
-              ),
-            ),
+    final screenSize = MediaQuery.of(context).size;
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    const appBarHeight = kToolbarHeight;
+    final weekdayHeaderHeight = screenSize.width * 0.085;
+    final focusedRowHeight = _focusedRowHeight(context);
+    final availableHeight = screenSize.height -
+        statusBarHeight -
+        appBarHeight -
+        weekdayHeaderHeight;
+    // 展开状态：以周视图行高为基准，月历高度 ≈ 7.5 倍行高，
+    // 让月视图每个单元格高度与周视图接近，同时不超过可用高度的 90%
+    final expandedCalendarHeight =
+        min(focusedRowHeight * 7.5, availableHeight * 0.9);
+    final calendarHeight =
+        _isCalendarExpanded ? expandedCalendarHeight : focusedRowHeight;
 
-            // 分割条（胶囊形拖拽手柄，颜色随视图格式变化）
-            GestureDetector(
-              onVerticalDragEnd: _onVerticalSwipe,
-              child: Column(
+    final displayFocusedDay = _focusedDay;
+
+    return Scaffold(
+      body: CustomScrollView(
+        controller: _scrollController,
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          // 顶部 AppBar：月份标题 + 今天 + 筛选
+          SliverAppBar(
+            pinned: true,
+            floating: false,
+            snap: false,
+            centerTitle: false,
+            title: GestureDetector(
+              onTap: _showYearPicker,
+              onHorizontalDragEnd: _onHeaderHorizontalSwipe,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Divider(height: 1, color: Color(0xFF2A2A2A)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: _calendarFormat == CalendarFormat.month
-                            ? const Color(0xFF6B5BCD)
-                            : (_calendarFormat == CalendarFormat.twoWeeks
-                                ? const Color(0xFF4D4D4D)
-                                : const Color(0xFF8A8F98)),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
+                  Text(
+                    _displayFormat.format(_focusedDay),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
                   ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down, size: 20),
                 ],
               ),
             ),
+            actions: [
+              _buildFilterButton(),
+              const SizedBox(width: 8),
+            ],
+            foregroundColor: Colors.white,
+          ),
 
-            // Selected date performances
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          // 星期标题（固定）
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _WeekdayHeaderDelegate(
+              height: weekdayHeaderHeight,
+            ),
+          ),
+
+          // 月历网格
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: calendarHeight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onVerticalDragEnd: _onVerticalSwipe,
+                onHorizontalDragEnd: _onHeaderHorizontalSwipe,
+                onTap: _isCalendarExpanded ? null : _expandCalendar,
+                child: ClipRect(
+                  child: TableCalendar(
+                    firstDay: DateTime(2020),
+                  lastDay: DateTime(2030),
+                  focusedDay: displayFocusedDay,
+                  selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                  calendarFormat: _calendarFormat,
+                  availableCalendarFormats: const {
+                    CalendarFormat.month: '月',
+                    CalendarFormat.week: '周',
+                  },
+                  availableGestures: AvailableGestures.none,
+                  rowHeight: _isCalendarExpanded
+                      ? _calculateMonthRowHeight(context,
+                          maxHeight: calendarHeight)
+                      : calendarHeight,
+                  eventLoader: (day) {
+                    final normalized = DateTime(day.year, day.month, day.day);
+                    return _events[normalized] ?? [];
+                  },
+                  onDaySelected: (selectedDay, focusedDay) {
+                    _onDaySelected(selectedDay);
+                  },
+                  onPageChanged: (focusedDay) {
+                    setState(() => _focusedDay = focusedDay);
+                    _loadEventsForMonth(focusedDay);
+                  },
+                  onFormatChanged: (format) {
+                    setState(() {
+                      _calendarFormat = format;
+                      _focusedDay = _selectedDay ?? _focusedDay;
+                    });
+                  },
+                  calendarBuilders: CalendarBuilders(
+                    dowBuilder: (context, day) => const SizedBox.shrink(),
+                    markerBuilder: (context, date, events) {
+                      // 海报单元格通过海报边框/渐变占位表达状态，不再显示底部圆点
+                      return const SizedBox.shrink();
+                    },
+                    // 显示农历
+                    defaultBuilder: (context, day, focusedDay) {
+                      final normalized = DateTime(day.year, day.month, day.day);
+                      return _buildCalendarCell(
+                        day,
+                        false,
+                        false,
+                        events: _events[normalized] ?? [],
+                      );
+                    },
+                    todayBuilder: (context, day, focusedDay) {
+                      final normalized = DateTime(day.year, day.month, day.day);
+                      return _buildCalendarCell(
+                        day,
+                        true,
+                        false,
+                        events: _events[normalized] ?? [],
+                      );
+                    },
+                    selectedBuilder: (context, day, focusedDay) {
+                      final normalized = DateTime(day.year, day.month, day.day);
+                      return _buildCalendarCell(
+                        day,
+                        isSameDay(day, DateTime.now()),
+                        true,
+                        events: _events[normalized] ?? [],
+                      );
+                    },
+                    outsideBuilder: (context, day, focusedDay) {
+                      if (_calendarFormat == CalendarFormat.month) {
+                        return const SizedBox.shrink();
+                      }
+                      final normalized = DateTime(day.year, day.month, day.day);
+                      return _buildCalendarCell(
+                        day,
+                        false,
+                        false,
+                        isOutside: true,
+                        events: _events[normalized] ?? [],
+                      );
+                    },
+                    disabledBuilder: (context, day, focusedDay) =>
+                        const SizedBox.shrink(),
+                  ),
+                  calendarStyle: CalendarStyle(
+                    cellMargin: const EdgeInsets.all(2),
+                    markerSize: 6,
+                    markersMaxCount: 3,
+                    outsideDaysVisible: _calendarFormat != CalendarFormat.month,
+                    defaultTextStyle: const TextStyle(color: Colors.white),
+                    weekendTextStyle: const TextStyle(color: Color(0xFFB3B3B3)),
+                    outsideTextStyle: const TextStyle(color: Color(0xFF444444)),
+                    // today/selected 样式完全由 custom builder 控制
+                  ),
+                  daysOfWeekHeight: 0,
+                  startingDayOfWeek: StartingDayOfWeek.monday,
+                  headerVisible: false,
+                  locale: 'zh_CN',
+                  sixWeekMonthsEnforced: true,
+                ),
+              ),
+            ),
+          ),
+          ),
+
+          // 分割条（胶囊形拖拽手柄 + 淡淡光线）
+          SliverToBoxAdapter(
+            child: GestureDetector(
+              onVerticalDragEnd: _onVerticalSwipe,
+              onTap: _toggleCalendarExpansion,
+              child: Builder(
+                builder: (context) {
+                  final screenWidth = MediaQuery.of(context).size.width;
+                  final selectedNormalized = _selectedDay != null
+                      ? DateTime(_selectedDay!.year, _selectedDay!.month,
+                          _selectedDay!.day)
+                      : null;
+                  final hasSelectedEvent = selectedNormalized != null &&
+                      (_events[selectedNormalized]?.isNotEmpty ?? false);
+                  final primaryColor = Theme.of(context).colorScheme.primary;
+
+                  return Column(
+                    children: [
+                      Container(
+                        height: screenWidth *
+                            (hasSelectedEvent ? 0.008 : 0.004),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Colors.transparent,
+                              primaryColor.withValues(
+                                  alpha: hasSelectedEvent ? 1.0 : 0.45),
+                              primaryColor.withValues(
+                                  alpha: hasSelectedEvent ? 0.6 : 0.2),
+                              Colors.transparent,
+                            ],
+                            stops: const [0.0, 0.45, 0.55, 1.0],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: primaryColor.withValues(
+                                  alpha: hasSelectedEvent ? 0.55 : 0.25),
+                              blurRadius: hasSelectedEvent ? 18 : 6,
+                              spreadRadius: hasSelectedEvent ? 3 : 0.5,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.symmetric(
+                            vertical: screenWidth * 0.015),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: screenWidth * 0.10,
+                          height: screenWidth * 0.01,
+                          decoration: BoxDecoration(
+                            color: _calendarFormat == CalendarFormat.month
+                                ? const Color(0xFF6B5BCD)
+                                : const Color(0xFF8A8F98),
+                            borderRadius: BorderRadius.circular(screenWidth * 0.005),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+
+          // 选中日期标题
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                screenSize.width * 0.04,
+                screenSize.width * 0.01,
+                screenSize.width * 0.04,
+                screenSize.width * 0.02,
+              ),
               child: Row(
                 children: [
                   Text(
                     '${_selectedDay?.day ?? _focusedDay.day}日 ${_weekdayFormat.format(_selectedDay ?? _focusedDay)}',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
                   const Spacer(),
                   Text(
                     '${_performances.length} 场',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF8A8F98),
-                    ),
+                          color: const Color(0xFF8A8F98),
+                        ),
                   ),
                 ],
               ),
             ),
+          ),
 
-            _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _performances.isEmpty
-                    ? _buildEmptyState()
-                    : Column(
-                        children: _performances.asMap().entries.map((entry) {
-                          final index = entry.key;
-                          final perf = entry.value;
-                          final status = perf['status'] as String? ?? 'unmarked';
+          // 票根列表
+          _isLoading
+              ? const SliverToBoxAdapter(
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : _performances.isEmpty
+                  ? SliverToBoxAdapter(child: _buildEmptyState())
+                  : SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final perf = _performances[index];
+                          final status =
+                              perf['status'] as String? ?? 'unmarked';
                           final statusColor = _statusColor(status);
                           final coverPath = perf['cover_path'] as String?;
 
@@ -376,134 +603,497 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                   _loadEventsForMonth(_focusedDay);
                                 });
                               },
-                              child: _buildTicketCard(perf, status, statusColor, coverPath),
+                              child: _buildTicketCard(
+                                  perf, status, statusColor, coverPath),
                             ),
                           );
-                        }).toList(),
+                        },
+                        childCount: _performances.length,
                       ),
-          ],
-        ),
+                    ),
+
+          // 底部呼吸空间
+          SliverToBoxAdapter(
+            child: SizedBox(height: screenSize.width * 0.06),
+          ),
+        ],
       ),
     );
   }
 
   // 大麦风格票根卡片
-  Widget _buildTicketCard(Map<String, dynamic> perf, String status, Color statusColor, String? coverPath) {
+  Widget _buildTicketCard(Map<String, dynamic> perf, String status,
+      Color statusColor, String? coverPath) {
     final showName = perf['show_name'] ?? '未知剧目';
     final theater = perf['theater'] ?? '未知剧场';
-    final date = perf['date'] ?? '';
-    final time = perf['time'] ?? '';
+    final rawDate = perf['date'] as String? ?? '';
+    final rawTime = perf['time'] as String? ?? '';
+    final date = rawDate.length >= 10 ? rawDate.substring(5) : rawDate;
+    final time = rawTime.isNotEmpty ? rawTime.substring(0, 5) : '';
     final seat = perf['seat'] as String? ?? '';
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14, left: 12, right: 12),
-      child: ClipPath(
-        clipper: _TicketClipper(),
-        child: Container(
-          height: 150,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.circular(14),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        // 卡片高度：屏幕宽度的 28%，放大票根展示
+        final cardHeight = (maxW * 0.28).clamp(120.0, 180.0);
+        // 海报宽度：卡片高度的 85%，左侧海报更大
+        final posterWidth = cardHeight * 0.85;
+        // 右侧状态区：只显示图标，宽度稍窄
+        final statusAreaWidth = (maxW * 0.12).clamp(48.0, 72.0);
+        // 信息区内边距比例化
+        final horizontalPadding = maxW * 0.04;
+        final verticalPadding = (cardHeight * 0.05).clamp(6.0, 12.0);
+        // 字号比例化
+        final titleFontSize = (cardHeight * 0.16).clamp(14.0, 18.0);
+        final metaFontSize = (cardHeight * 0.13).clamp(11.0, 14.0);
+        final dateFontSize = (cardHeight * 0.12).clamp(10.0, 13.0);
+        final statusIconSize = (cardHeight * 0.24).clamp(22.0, 30.0);
+
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: maxW * 0.035,
+            left: maxW * 0.03,
+            right: maxW * 0.03,
           ),
-          child: Row(
-            children: [
-              // 左侧：海报
-              Container(
-                width: 120,
-                height: 150,
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.15),
-                  image: coverPath != null && coverPath.isNotEmpty
-                      ? DecorationImage(
-                          image: FileImage(File(coverPath)),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: coverPath == null || coverPath.isEmpty
-                    ? Center(
-                        child: Text(
-                          showName.length >= 2 ? showName.substring(0, 2) : showName,
-                          style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: statusColor,
-                          ),
-                        ),
-                      )
-                    : null,
+          child: ClipPath(
+            clipper: const TicketClipper(),
+            child: Container(
+              height: cardHeight,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E1E),
+                borderRadius: BorderRadius.circular(maxW * 0.035),
               ),
-              // 中间：信息区
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        showName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        theater,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF8A8F98),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.calendar_today, size: 13, color: statusColor),
-                          const SizedBox(width: 4),
-                          Flexible(
+              child: Row(
+                children: [
+                  // 左侧：海报
+                  Container(
+                    width: posterWidth,
+                    decoration: BoxDecoration(
+                      gradient: coverPath == null || coverPath.isEmpty
+                          ? LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                statusColor.withValues(alpha: 0.35),
+                                statusColor.withValues(alpha: 0.1),
+                              ],
+                            )
+                          : null,
+                      image: coverPath != null && coverPath.isNotEmpty
+                          ? DecorationImage(
+                              image: FileImage(File(coverPath)),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
+                    ),
+                    child: coverPath == null || coverPath.isEmpty
+                        ? Center(
                             child: Text(
-                              '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
-                              style: TextStyle(fontSize: 12, color: statusColor),
-                              overflow: TextOverflow.ellipsis,
+                              showName.length >= 2
+                                  ? showName.substring(0, 2)
+                                  : showName,
+                              style: TextStyle(
+                                fontSize: cardHeight * 0.22,
+                                fontWeight: FontWeight.bold,
+                                color: statusColor,
+                              ),
+                            ),
+                          )
+                        : null,
+                  ),
+                  // 中间：信息区
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: horizontalPadding,
+                        vertical: verticalPadding,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // 场次日期置顶
+                          Row(
+                            children: [
+                              Icon(Icons.calendar_today,
+                                  size: dateFontSize * 1.1,
+                                  color: statusColor),
+                              SizedBox(width: maxW * 0.01),
+                              Flexible(
+                                child: Text(
+                                  '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
+                                  style: TextStyle(
+                                    fontSize: dateFontSize,
+                                    fontWeight: FontWeight.w600,
+                                    color: statusColor,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: cardHeight * 0.03),
+                          // 剧名
+                          Text(
+                            showName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: titleFontSize,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                          if (seat.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            Icon(Icons.event_seat, size: 13, color: statusColor),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(seat, style: TextStyle(fontSize: 12, color: statusColor), overflow: TextOverflow.ellipsis),
+                          SizedBox(height: cardHeight * 0.02),
+                          // 剧院
+                          Text(
+                            theater,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: metaFontSize,
+                              color: const Color(0xFF8A8F98),
+                            ),
+                          ),
+                          // 座位
+                          if (status == 'bought' || status == 'watched') ...[
+                            SizedBox(height: cardHeight * 0.02),
+                            Row(
+                              children: [
+                                Icon(Icons.event_seat,
+                                    size: dateFontSize * 1.1,
+                                    color: statusColor),
+                                SizedBox(width: maxW * 0.01),
+                                Flexible(
+                                  child: Text(
+                                    seat.isNotEmpty ? seat : '座位未录入',
+                                    style: TextStyle(
+                                      fontSize: dateFontSize,
+                                      color: statusColor.withValues(
+                                          alpha: seat.isNotEmpty ? 1.0 : 0.5),
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ],
                       ),
-                    ],
+                    ),
                   ),
+                  // 右侧状态
+                  SizedBox(
+                    width: statusAreaWidth,
+                    child: Center(
+                      child: Icon(_statusIcon(status),
+                          size: statusIconSize, color: statusColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // 日历单元格（带农历 + 海报）
+  Widget _buildCalendarCell(
+    DateTime day,
+    bool isToday,
+    bool isSelected, {
+    bool isOutside = false,
+    List<Map<String, dynamic>> events = const [],
+  }) {
+    final lunar = Lunar.fromDate(day);
+    final lunarDay = lunar.getDayInChinese();
+    final lunarText =
+        lunarDay == '初一' ? '${lunar.getMonthInChinese()}月' : lunarDay;
+
+    if (isOutside) {
+      return const SizedBox.shrink();
+    }
+
+    final normalizedDay = DateTime(day.year, day.month, day.day);
+    final dayEvents =
+        events.isNotEmpty ? events : (_events[normalizedDay] ?? []);
+    final hasEvents = dayEvents.isNotEmpty;
+
+    final textColor = day.weekday >= 6 ? const Color(0xFFB3B3B3) : Colors.white;
+
+    // 无事件：传统数字单元格
+    if (!hasEvents) {
+      final primaryColor = Theme.of(context).colorScheme.primary;
+      final cell = Container(
+        margin: const EdgeInsets.all(2),
+        alignment: Alignment.center,
+        decoration: isSelected
+            ? BoxDecoration(
+                border: Border.all(
+                  color: primaryColor.withValues(alpha: 0.5),
+                  width: 1,
+                ),
+                color: primaryColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: primaryColor.withValues(alpha: 0.2),
+                    blurRadius: 10,
+                    spreadRadius: 0,
+                  ),
+                ],
+              )
+            : null,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                '${day.day}',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: isToday || isSelected
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                  color: isSelected
+                      ? Colors.white
+                      : (isToday
+                          ? primaryColor
+                          : textColor),
                 ),
               ),
-              // 右侧状态
-              Container(
-                width: 72,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(_statusIcon(status), size: 26, color: statusColor),
-                    const SizedBox(height: 8),
-                    Text(
-                      _statusLabel(status),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: statusColor,
-                      ),
+              Text(
+                lunarText,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isSelected
+                      ? Colors.white.withValues(alpha: 0.8)
+                      : (isToday
+                          ? primaryColor.withValues(alpha: 0.7)
+                          : const Color(0xFF8A8F98)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      return cell;
+    }
+
+    // 有事件：海报单元格
+    return _buildPosterCell(day, dayEvents, isToday, isSelected,
+        isOutside: isOutside);
+  }
+
+  Widget _buildPosterFallback(String showName, Color color) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: 0.35),
+            color.withValues(alpha: 0.1),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          showName.length >= 2 ? showName.substring(0, 2) : showName,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPosterCell(
+    DateTime day,
+    List<Map<String, dynamic>> events,
+    bool isToday,
+    bool isSelected, {
+    bool isOutside = false,
+  }) {
+    final showCount = events.length;
+    final normalizedDay = DateTime(day.year, day.month, day.day);
+    final currentIndex = _posterRotationIndex[normalizedDay] ?? 0;
+    final safeIndex = currentIndex % showCount;
+
+    Widget posterThumbnail(
+      Map<String, dynamic> event, {
+      bool topmost = false,
+      bool dimmed = false,
+    }) {
+      final status = event['status'] as String? ?? 'unmarked';
+      final color = _statusColor(status);
+      final coverPath = event['cover_path'] as String?;
+      final showName = event['show_name'] as String? ?? '未知';
+
+      return Container(
+        decoration: BoxDecoration(
+          border: topmost
+              ? Border.all(
+                  color: color.withValues(alpha: 0.6),
+                  width: 1,
+                )
+              : null,
+          borderRadius: BorderRadius.circular(0),
+          color: color.withValues(alpha: isOutside ? 0.08 : 0.15),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Opacity(
+          opacity: isOutside || dimmed ? 0.5 : 1.0,
+          child: coverPath != null && coverPath.isNotEmpty
+              ? Image.file(
+                  File(coverPath),
+                  fit: BoxFit.cover,
+                  alignment: Alignment.center,
+                  errorBuilder: (_, __, ___) =>
+                      _buildPosterFallback(showName, color),
+                )
+              : _buildPosterFallback(showName, color),
+        ),
+      );
+    }
+
+    Widget posterContent;
+    if (showCount == 1) {
+      posterContent = posterThumbnail(events.first, topmost: true);
+    } else {
+      // 多张海报：3:4 小卡层叠，点击轮换
+      final nextIndex = (safeIndex + 1) % showCount;
+
+      posterContent = Stack(
+        fit: StackFit.expand,
+        children: [
+          // 底层暗示小卡（轻微偏移、淡化）
+          Positioned(
+            left: showCount > 2 ? 6 : 4,
+            top: showCount > 2 ? 6 : 4,
+            right: 0,
+            bottom: 0,
+            child: Opacity(
+              opacity: 0.35,
+              child: posterThumbnail(
+                events[(safeIndex + 2) % showCount],
+                topmost: false,
+                dimmed: true,
+              ),
+            ),
+          ),
+          if (showCount > 2)
+            Positioned(
+              left: 3,
+              top: 3,
+              right: 0,
+              bottom: 0,
+              child: Opacity(
+                opacity: 0.55,
+                child: posterThumbnail(
+                  events[nextIndex],
+                  topmost: false,
+                  dimmed: true,
+                ),
+              ),
+            ),
+          // 当前主海报
+          Positioned(
+            left: 0,
+            top: 0,
+            right: showCount > 2 ? 6 : 4,
+            bottom: showCount > 2 ? 6 : 4,
+            child: posterThumbnail(events[safeIndex], topmost: true),
+          ),
+          // 张数角标
+          Positioned(
+            right: 6,
+            bottom: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xCC000000),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '$showCount',
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final cell = Opacity(
+      opacity: isOutside ? 0.45 : 1.0,
+      child: Container(
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(2),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.4),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              posterContent,
+              // 选中蒙层
+              if (isSelected)
+                Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.3),
+                  ),
+                ),
+              // 日期圆标
+              Positioned(
+                left: 0,
+                top: 0,
+                child: Container(
+                  margin: const EdgeInsets.all(2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC000000),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${day.day}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -511,66 +1101,32 @@ class _CalendarScreenState extends State<CalendarScreen> {
         ),
       ),
     );
-  }
 
-  // 日历单元格（带农历）
-  Widget _buildCalendarCell(DateTime day, bool isToday, bool isSelected,
-      {bool isOutside = false}) {
-    final lunar = Lunar.fromDate(day);
-    final lunarDay = lunar.getDayInChinese();
-    // 初一显示月份
-    final lunarText = lunarDay == '初一'
-        ? lunar.getMonthInChinese() + '月'
-        : lunarDay;
+    // 多张海报时，点击选中日期；若已选中则轮换下一张
+    if (showCount > 1) {
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          final isAlreadySelected = isSameDay(_selectedDay, day);
+          if (isAlreadySelected) {
+            setState(() {
+              _posterRotationIndex[normalizedDay] =
+                  (_posterRotationIndex[normalizedDay] ?? 0) + 1;
+            });
+          }
+          _onDaySelected(day);
+        },
+        child: cell,
+      );
+    }
 
-    final textColor = isOutside
-        ? const Color(0xFF444444)
-        : (day.weekday >= 6
-            ? const Color(0xFFB3B3B3)
-            : Colors.white);
-
-    final lunarColor = isSelected || isToday
-        ? Colors.white.withValues(alpha: 0.8)
-        : (isOutside
-            ? const Color(0xFF3A3A3A)
-            : const Color(0xFF8A8F98));
-
-    return Container(
-      margin: const EdgeInsets.all(4),
-      decoration: isSelected
-          ? BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              shape: BoxShape.circle,
-            )
-          : isToday
-              ? BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                  shape: BoxShape.circle,
-                )
-              : null,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '${day.day}',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: isToday || isSelected ? FontWeight.bold : FontWeight.normal,
-              color: isSelected || isToday
-                  ? Colors.white
-                  : textColor,
-            ),
-          ),
-          Text(
-            lunarText,
-            style: TextStyle(
-              fontSize: 10,
-              color: lunarColor,
-            ),
-          ),
-        ],
-      ),
-    );
+    if (isToday) {
+      return TodaySpotlight(
+        color: Theme.of(context).colorScheme.primary,
+        child: cell,
+      );
+    }
+    return cell;
   }
 
   // 年历页面
@@ -592,158 +1148,161 @@ class _CalendarScreenState extends State<CalendarScreen> {
       });
       _loadEventsForMonth(selectedDate);
       _loadPerformancesForDate(selectedDate);
+      _notifySelectedDayHasEvent();
     }
   }
 
-  Widget _buildFilterMenu() {
-    final filterColor = switch (_filter) {
-      CalendarFilter.wantToSee => const Color(0xFF811FE2),
-      CalendarFilter.bought => const Color(0xFF34D399),
-      CalendarFilter.watched => const Color(0xFFD4A853),
-      _ => null,
-    };
+  Widget _buildFilterButton() {
+    final filterColor =
+        _filter == CalendarFilter.all ? null : _statusColorForFilter(_filter);
 
-    return PopupMenuButton<CalendarFilter>(
-      initialValue: _filter,
-      onSelected: (filter) {
-        setState(() => _filter = filter);
-        _loadEventsForMonth(_focusedDay);
-        _loadPerformancesForDate(_selectedDay ?? _focusedDay);
-      },
-      offset: const Offset(0, 40),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      color: const Color(0xFF2A2A2A),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: CalendarFilter.all,
-          child: Row(
-            children: [
-              const SizedBox(width: 20),
-              Text(
-                CalendarFilter.all.label,
-                style: TextStyle(
-                  color: _filter == CalendarFilter.all ? Colors.white : const Color(0xFFB3B3B3),
-                  fontWeight: _filter == CalendarFilter.all ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
+    return IconButton(
+      icon: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF181818),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color:
+                filterColor?.withValues(alpha: 0.3) ?? const Color(0xFF2A2A2A),
           ),
         ),
-        const PopupMenuDivider(height: 1),
-        PopupMenuItem(
-          value: CalendarFilter.wantToSee,
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF811FE2),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                CalendarFilter.wantToSee.label,
-                style: TextStyle(
-                  color: _filter == CalendarFilter.wantToSee ? const Color(0xFF811FE2) : const Color(0xFFB3B3B3),
-                  fontWeight: _filter == CalendarFilter.wantToSee ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: CalendarFilter.bought,
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF34D399),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                CalendarFilter.bought.label,
-                style: TextStyle(
-                  color: _filter == CalendarFilter.bought ? const Color(0xFF34D399) : const Color(0xFFB3B3B3),
-                  fontWeight: _filter == CalendarFilter.bought ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: CalendarFilter.watched,
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFD4A853),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                CalendarFilter.watched.label,
-                style: TextStyle(
-                  color: _filter == CalendarFilter.watched ? const Color(0xFFD4A853) : const Color(0xFFB3B3B3),
-                  fontWeight: _filter == CalendarFilter.watched ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (filterColor != null) ...[
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: filterColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 4),
+              StatusDot(color: filterColor, size: 6),
+              const SizedBox(width: 6),
             ],
-            Text(
-              _filter.label,
-              style: const TextStyle(fontSize: 14),
-            ),
-            const Icon(Icons.keyboard_arrow_down, size: 18),
+            const Icon(Icons.tune, size: 18),
           ],
         ),
+      ),
+      onPressed: _showFilterMenu,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+    );
+  }
+
+  void _showFilterMenu() async {
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final RenderBox overlay =
+        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(button.size.topRight(Offset.zero),
+            ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero),
+            ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final result = await showMenu<CalendarFilter>(
+      context: context,
+      position: position,
+      color: const Color(0xFF1E1E1E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: CalendarFilter.values
+          .map((filter) => _buildFilterMenuItem(filter))
+          .toList(),
+    );
+
+    if (result != null && result != _filter) {
+      setState(() => _filter = result);
+      _loadEventsForMonth(_focusedDay);
+      _loadPerformancesForDate(_selectedDay ?? _focusedDay);
+    }
+  }
+
+  PopupMenuItem<CalendarFilter> _buildFilterMenuItem(CalendarFilter filter) {
+    final isSelected = _filter == filter;
+    final color = _statusColorForFilter(filter);
+    return PopupMenuItem(
+      value: filter,
+      child: Row(
+        children: [
+          if (filter != CalendarFilter.all) ...[
+            StatusDot(color: color, size: 8),
+            const SizedBox(width: 12),
+          ] else
+            const SizedBox(width: 20),
+          Text(
+            filter.label,
+            style: TextStyle(
+              fontSize: 14,
+              color: isSelected
+                  ? (filter == CalendarFilter.all ? Colors.white : color)
+                  : const Color(0xFFB3B3B3),
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+          if (isSelected) ...[
+            const Spacer(),
+            Icon(
+              Icons.check,
+              size: 16,
+              color: filter == CalendarFilter.all ? Colors.white : color,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _statusColorForFilter(CalendarFilter filter) {
+    return switch (filter) {
+      CalendarFilter.wantToSee => const Color(0xFF811FE2),
+      CalendarFilter.bought => const Color(0xFF34D399),
+      CalendarFilter.watched => const Color(0xFFD4A853),
+      _ => const Color(0xFFB3B3B3),
+    };
+  }
+
+  // 星期标题委托（用于 SliverPersistentHeader）
+  // ignore: unused_element
+  Widget _buildWeekdayHeader(double height) {
+    final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    return Container(
+      height: height,
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Row(
+        children: List.generate(7, (index) {
+          final isWeekend = index >= 5;
+          return Expanded(
+            child: Center(
+              child: Text(
+                weekdays[index],
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: isWeekend
+                      ? const Color(0xFFB3B3B3)
+                      : const Color(0xFF8A8F98),
+                ),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
+    return const Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
+        padding: EdgeInsets.symmetric(vertical: 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _BreathingIcon(icon: Icons.bookmark_border),
-            const SizedBox(height: 16),
-            const Text(
+            BreathingIcon(icon: Icons.bookmark_border),
+            SizedBox(height: 16),
+            Text(
               '今日无标记场次',
               style: TextStyle(color: Color(0xFF8A8F98)),
             ),
-            const SizedBox(height: 8),
-            const Text(
+            SizedBox(height: 8),
+            Text(
               '在甘特图标记「想看」或「已买」后，\n场次会显示在这里',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -758,109 +1317,48 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 }
 
-class _BreathingIcon extends StatefulWidget {
-  final IconData icon;
-  const _BreathingIcon({required this.icon});
+class _WeekdayHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+
+  _WeekdayHeaderDelegate({required this.height});
 
   @override
-  State<_BreathingIcon> createState() => _BreathingIconState();
-}
-
-class _BreathingIconState extends State<_BreathingIcon>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+  double get minExtent => height;
 
   @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 2000),
-      vsync: this,
-    )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0, end: 4).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
+  double get maxExtent => height;
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) => Transform.translate(
-        offset: Offset(0, -_animation.value),
-        child: child,
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    return Container(
+      height: height,
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Row(
+        children: List.generate(7, (index) {
+          final isWeekend = index >= 5;
+          return Expanded(
+            child: Center(
+              child: Text(
+                weekdays[index],
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: isWeekend
+                      ? const Color(0xFFB3B3B3)
+                      : const Color(0xFF8A8F98),
+                ),
+              ),
+            ),
+          );
+        }),
       ),
-      child: Icon(widget.icon, size: 72, color: const Color(0xFF4D4D4D)),
     );
-  }
-}
-
-// 票根齿孔裁剪器
-class _TicketClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    const notchRadius = 12.0;
-    final notchCenterY = size.height / 2;
-
-    // 左上角圆角
-    path.moveTo(12, 0);
-    // 上边
-    path.lineTo(size.width - 12, 0);
-    // 右上角圆角
-    path.arcToPoint(
-      Offset(size.width, 12),
-      radius: const Radius.circular(12),
-    );
-    // 右边到上齿孔
-    path.lineTo(size.width, notchCenterY - notchRadius);
-    // 上齿孔（向内凹）
-    path.arcToPoint(
-      Offset(size.width, notchCenterY + notchRadius),
-      radius: const Radius.circular(notchRadius),
-      clockwise: false,
-    );
-    // 右边到下齿孔
-    path.lineTo(size.width, size.height - 12);
-    // 右下角圆角
-    path.arcToPoint(
-      Offset(size.width - 12, size.height),
-      radius: const Radius.circular(12),
-    );
-    // 下边
-    path.lineTo(12, size.height);
-    // 左下角圆角
-    path.arcToPoint(
-      Offset(0, size.height - 12),
-      radius: const Radius.circular(12),
-    );
-    // 左边到下齿孔
-    path.lineTo(0, notchCenterY + notchRadius);
-    // 下齿孔（向内凹）
-    path.arcToPoint(
-      Offset(0, notchCenterY - notchRadius),
-      radius: const Radius.circular(notchRadius),
-      clockwise: false,
-    );
-    // 左边到上
-    path.lineTo(0, 12);
-    // 左上角圆角
-    path.arcToPoint(
-      const Offset(12, 0),
-      radius: const Radius.circular(12),
-    );
-
-    path.close();
-    return path;
   }
 
   @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+  bool shouldRebuild(covariant _WeekdayHeaderDelegate oldDelegate) {
+    return oldDelegate.height != height;
+  }
 }

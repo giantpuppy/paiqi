@@ -312,6 +312,18 @@ class DatabaseHelper {
     return result.map((json) => Performance.fromMap(json)).toList();
   }
 
+  Future<List<Map<String, dynamic>>> getPerformancesWithShowByDateRange(String startDate, String endDate) async {
+    final db = await instance.database;
+    final result = await db.rawQuery('''
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
+      FROM performances p
+      JOIN shows s ON p.show_id = s.id
+      WHERE p.date >= ? AND p.date <= ?
+      ORDER BY p.date ASC, p.time ASC
+    ''', [startDate, endDate]);
+    return result;
+  }
+
   Future<Performance?> getPerformanceById(int id) async {
     final db = await instance.database;
     final maps = await db.query('performances', where: 'id = ?', whereArgs: [id]);

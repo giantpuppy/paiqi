@@ -75,7 +75,47 @@
       "Bash(kill 1058)",
       "Bash(kill 684)",
       "Bash(dart *)",
-      "Bash(pkill -f \"flutter\")"
+      "Bash(pkill -f \"flutter\")",
+      "Bash(cmd.exe *)",
+      "Bash(/c/Windows/System32/cmd.exe *)",
+      "Bash(/c/src/flutter/bin/flutter devices *)",
+      "Bash(FLUTTER_ROOT=/c/src/flutter /c/src/flutter/bin/dart *)",
+      "Bash(/c/src/flutter/bin/cache/dart-sdk/bin/dart *)",
+      "Bash(npx react-native *)",
+      "Bash(adb kill-server *)",
+      "Bash(adb start-server *)",
+      "Bash(taskkill /F /IM dart.exe)",
+      "Bash(gh *)",
+      "Skill(update-config)",
+      "Bash(dir /s)",
+      "Bash(cmd *)",
+      "Bash(compgen -c)",
+      "Bash(/c/src/flutter/bin/flutter run *)",
+      "Bash(/c/src/flutter/bin/flutter.bat run *)",
+      "Bash(/c/src/flutter/bin/flutter.bat build *)",
+      "Bash(/c/src/flutter/bin/flutter.bat analyze *)",
+      "Bash(/c/src/flutter/bin/flutter.bat clean *)",
+      "Read(//tmp/**)",
+      "Bash(sqlite3 *)",
+      "Bash(adb pull *)",
+      "Bash(adb exec-out *)",
+      "WebFetch(domain:www.instagram.com)",
+      "Bash(xxd lib/screens/calendar_screen.dart)",
+      "Bash(chardetect lib/screens/calendar_screen.dart)",
+      "Bash(xxd)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /c/Users/giant/Desktop/app && git push origin main 2>/dev/null || true",
+            "statusMessage": "Pushing to GitHub..."
+          }
+        ]
+      }
     ]
   }
 }
