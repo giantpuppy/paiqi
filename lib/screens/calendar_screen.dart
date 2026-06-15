@@ -48,6 +48,8 @@ class CalendarScreen extends StatefulWidget {
 class _CalendarScreenState extends State<CalendarScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  DateTime? _lastTappedDay;
+  int _posterRotationIndex = 0;
   CalendarFormat _calendarFormat = CalendarFormat.month;
   CalendarFilter _filter = CalendarFilter.bought;
   List<Map<String, dynamic>> _performances = [];
@@ -244,15 +246,33 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (fromUser) {
       HapticFeedback.lightImpact();
     }
+
+    final normalized = DateTime(
+      selectedDay.year,
+      selectedDay.month,
+      selectedDay.day,
+    );
+    final dayEvents = _events[normalized] ?? [];
+    final int newRotationIndex;
+    if (_lastTappedDay != null &&
+        isSameDay(_lastTappedDay!, selectedDay) &&
+        dayEvents.length > 1) {
+      newRotationIndex = (_posterRotationIndex + 1) % dayEvents.length;
+    } else {
+      newRotationIndex = 0;
+    }
+
     setState(() {
       _selectedDay = selectedDay;
-      _focusedDay = selectedDay;
+      // 周视图下点击日期不切换 focusedDay，避免页面自动左右滑动
+      if (_calendarFormat == CalendarFormat.month) {
+        _focusedDay = selectedDay;
+      }
+      _lastTappedDay = selectedDay;
+      _posterRotationIndex = newRotationIndex;
     });
     _loadPerformancesForDate(selectedDay);
     _notifySelectedDayHasEvent();
-    if (!_isCalendarExpanded) {
-      _expandCalendar();
-    }
   }
 
   void _onHeaderHorizontalSwipe(DragEndDetails details) {
@@ -487,6 +507,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                               isToday: isSameDay(day, DateTime.now()),
                               isSelected: true,
                               events: _events[normalized] ?? [],
+                              rotationIndex: _posterRotationIndex,
                             );
                           },
                           outsideBuilder: (context, day, focusedDay) {
@@ -814,72 +835,80 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          // 场次日期置顶
-                          Row(
+                          // 顶部：日期 + 座位（座位在日期下一行）
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.calendar_today,
-                                  size: dateFontSize * 1.1, color: statusColor),
-                              SizedBox(width: maxW * 0.01),
-                              Flexible(
-                                child: Text(
-                                  '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
-                                  style: TextStyle(
-                                    fontSize: dateFontSize,
-                                    fontWeight: FontWeight.w600,
-                                    color: statusColor,
+                              Row(
+                                children: [
+                                  Icon(Icons.calendar_today,
+                                      size: dateFontSize * 1.1,
+                                      color: statusColor),
+                                  SizedBox(width: maxW * 0.01),
+                                  Text(
+                                    '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
+                                    style: TextStyle(
+                                      fontSize: dateFontSize,
+                                      fontWeight: FontWeight.w600,
+                                      color: statusColor,
+                                    ),
                                   ),
-                                  overflow: TextOverflow.ellipsis,
+                                ],
+                              ),
+                              if (status == 'bought' ||
+                                  status == 'watched') ...[
+                                SizedBox(height: cardHeight * 0.02),
+                                Row(
+                                  children: [
+                                    Icon(Icons.event_seat,
+                                        size: dateFontSize * 1.1,
+                                        color: statusColor),
+                                    SizedBox(width: maxW * 0.01),
+                                    Flexible(
+                                      child: Text(
+                                        seat.isNotEmpty ? seat : '座位未录入',
+                                        style: TextStyle(
+                                          fontSize: dateFontSize,
+                                          color: statusColor.withValues(
+                                              alpha: seat.isNotEmpty
+                                                  ? 1.0
+                                                  : 0.5),
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                          // 底部：剧名 + 剧院
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                showName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: titleFontSize,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              SizedBox(height: cardHeight * 0.02),
+                              Text(
+                                theater,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: metaFontSize,
+                                  color: const Color(0xFF8A8F98),
                                 ),
                               ),
                             ],
                           ),
-                          SizedBox(height: cardHeight * 0.03),
-                          // 剧名
-                          Text(
-                            showName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: titleFontSize,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          SizedBox(height: cardHeight * 0.02),
-                          // 剧院
-                          Text(
-                            theater,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: metaFontSize,
-                              color: const Color(0xFF8A8F98),
-                            ),
-                          ),
-                          // 座位
-                          if (status == 'bought' || status == 'watched') ...[
-                            SizedBox(height: cardHeight * 0.02),
-                            Row(
-                              children: [
-                                Icon(Icons.event_seat,
-                                    size: dateFontSize * 1.1,
-                                    color: statusColor),
-                                SizedBox(width: maxW * 0.01),
-                                Flexible(
-                                  child: Text(
-                                    seat.isNotEmpty ? seat : '座位未录入',
-                                    style: TextStyle(
-                                      fontSize: dateFontSize,
-                                      color: statusColor.withValues(
-                                          alpha: seat.isNotEmpty ? 1.0 : 0.5),
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
                         ],
                       ),
                     ),

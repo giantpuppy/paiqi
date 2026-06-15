@@ -11,6 +11,7 @@ class CalendarCell extends StatelessWidget {
   final bool isSelected;
   final bool isOutside;
   final List<Map<String, dynamic>> events;
+  final int rotationIndex;
 
   const CalendarCell({
     super.key,
@@ -19,6 +20,7 @@ class CalendarCell extends StatelessWidget {
     required this.isSelected,
     this.isOutside = false,
     this.events = const [],
+    this.rotationIndex = 0,
   });
 
   @override
@@ -36,6 +38,7 @@ class CalendarCell extends StatelessWidget {
         isToday: isToday,
         isSelected: isSelected,
         isOutside: isOutside,
+        rotationIndex: rotationIndex,
       );
     }
 

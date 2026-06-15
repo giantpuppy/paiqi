@@ -116,12 +116,43 @@ class PaiqiApp extends StatelessWidget {
           selectedItemColor: Color(0xFFFFFFFF),
           unselectedItemColor: Color(0xFFB3B3B3),
         ),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xFF121212),
-          indicatorColor: Color(0xFF252525),
-          labelTextStyle: WidgetStatePropertyAll(
-            TextStyle(color: Color(0xFFB3B3B3), fontSize: 12),
-          ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.transparent,
+          indicatorColor: Colors.transparent,
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final isSelected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: isSelected
+                  ? const Color(0xFF6B5BCD)
+                  : const Color(0xFFB3B3B3),
+              size: 24,
+              shadows: isSelected
+                  ? [
+                      Shadow(
+                        color: const Color(0xFF6B5BCD).withValues(alpha: 0.8),
+                        blurRadius: 8,
+                      ),
+                    ]
+                  : null,
+            );
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final isSelected = states.contains(WidgetState.selected);
+            return TextStyle(
+              color: isSelected
+                  ? const Color(0xFF6B5BCD)
+                  : const Color(0xFFB3B3B3),
+              fontSize: 12,
+              shadows: isSelected
+                  ? [
+                      Shadow(
+                        color: const Color(0xFF6B5BCD).withValues(alpha: 0.6),
+                        blurRadius: 6,
+                      ),
+                    ]
+                  : null,
+            );
+          }),
         ),
         dialogTheme: const DialogThemeData(
           backgroundColor: Color(0xFF181818),

@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'calendar_screen.dart';
 import 'gantt_screen.dart';
@@ -64,30 +65,41 @@ class _MainScreenState extends State<MainScreen> {
                   : null,
             ),
           ),
-          NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.calendar_month_outlined),
-                selectedIcon: Icon(Icons.calendar_month),
-                label: '日历',
+          ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(
+                color: const Color(0xFF121212).withValues(alpha: 0.65),
+                child: NavigationBar(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: (index) {
+                    setState(() {
+                      _currentIndex = index;
+                    });
+                  },
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  overlayColor: WidgetStateProperty.all(Colors.transparent),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.calendar_month_outlined),
+                      selectedIcon: Icon(Icons.calendar_month),
+                      label: '日历',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.view_timeline_outlined),
+                      selectedIcon: Icon(Icons.view_timeline),
+                      label: '排期',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.person_outline),
+                      selectedIcon: Icon(Icons.person),
+                      label: '我的',
+                    ),
+                  ],
+                ),
               ),
-              NavigationDestination(
-                icon: Icon(Icons.view_timeline_outlined),
-                selectedIcon: Icon(Icons.view_timeline),
-                label: '排期',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
-                label: '我的',
-              ),
-            ],
+            ),
           ),
         ],
       ),

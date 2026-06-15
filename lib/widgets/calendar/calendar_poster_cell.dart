@@ -1,17 +1,18 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../utils/status_colors.dart';
 import '../today_spotlight.dart';
-import 'poster_grid.dart';
 
 /// 月历中有演出场次的日期单元格。
 ///
-/// 包含：海报网格、日期圆标、开场时间胶囊、选中态信息浮层、外发光阴影。
+/// 包含：按比例布局的海报堆叠区、底部深灰蒙版时间区。
 class CalendarPosterCell extends StatelessWidget {
   final DateTime day;
   final List<Map<String, dynamic>> events;
   final bool isToday;
   final bool isSelected;
   final bool isOutside;
+  final int rotationIndex;
 
   const CalendarPosterCell({
     super.key,
@@ -20,34 +21,17 @@ class CalendarPosterCell extends StatelessWidget {
     required this.isToday,
     required this.isSelected,
     this.isOutside = false,
+    this.rotationIndex = 0,
   });
 
   static const double _outerRadius = 6.0;
-  static const double _innerRadius = 4.0;
+  static const double _innerRadius = 3.6; // _outerRadius * 0.6
 
   @override
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
-    final showCount = events.length;
 
-    // 取最早一场的开场时间
-    final earliestEvent = events.reduce((a, b) {
-      final aTime = a['time'] as String? ?? '';
-      final bTime = b['time'] as String? ?? '';
-      return aTime.compareTo(bTime) <= 0 ? a : b;
-    });
-    final earliestTime = earliestEvent['time'] as String? ?? '';
-    final timeText = earliestTime.length >= 5
-        ? earliestTime.substring(0, 5)
-        : earliestTime;
-    final statusColor = statusColorForEvent(earliestEvent);
-
-    // 底部信息浮层内容
-    final firstShowName = events.first['show_name'] as String? ?? '未知剧目';
-    final firstTheater = events.first['theater'] as String? ?? '未知剧场';
-    final displayShowName = showCount > 1 ? '$firstShowName 等 $showCount 场' : firstShowName;
-
-    Widget cell = Opacity(
+    return Opacity(
       opacity: isOutside ? 0.45 : 1.0,
       child: Container(
         margin: const EdgeInsets.all(2),
@@ -55,13 +39,11 @@ class CalendarPosterCell extends StatelessWidget {
           borderRadius: BorderRadius.circular(_outerRadius),
           boxShadow: isSelected
               ? [
-                  // 外层晕开
                   BoxShadow(
                     color: primaryColor.withValues(alpha: 0.15),
                     blurRadius: 16,
                     spreadRadius: 0,
                   ),
-                  // 内层聚焦
                   BoxShadow(
                     color: primaryColor.withValues(alpha: 0.3),
                     blurRadius: 6,
@@ -72,142 +54,289 @@ class CalendarPosterCell extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(_outerRadius),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 海报网格
-              PosterGrid(
-                events: events,
-                isOutside: isOutside,
-                outerRadius: _outerRadius,
-                innerRadius: _innerRadius,
-              ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final cellSize = constraints.biggest;
+              final cellPadding = cellSize.shortestSide * 0.04;
+              final contentHeight = cellSize.height - cellPadding * 2;
+              final posterAreaHeight = contentHeight * 0.82;
+              final timeBarHeight = contentHeight * 0.18;
+              final timeFontSize = (cellSize.height * 0.07).clamp(9.0, 12.0);
 
-              // 选中蒙层
-              AnimatedOpacity(
-                opacity: isSelected ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: primaryColor.withValues(alpha: 0.15),
-                  ),
-                ),
-              ),
+              final topEvent = events[rotationIndex % events.length];
+              final topTime = topEvent['time'] as String? ?? '';
+              final timeText = topTime.length >= 5
+                  ? topTime.substring(0, 5)
+                  : topTime;
+              final statusColor = statusColorForEvent(topEvent);
 
-              // 日期圆标 + 时间胶囊
-              Positioned(
-                left: 0,
-                top: 0,
-                child: Container(
-                  margin: const EdgeInsets.all(4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xCC000000),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '${day.day}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+              Widget cellContent = Container(
+                padding: EdgeInsets.all(cellPadding),
+                color: Colors.transparent,
+                child: Column(
+                  children: [
+                    // 海报堆叠区
+                    SizedBox(
+                      height: posterAreaHeight,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          _buildPosterStack(
+                            events,
+                            isOutside,
+                            posterAreaHeight,
+                            cellSize.shortestSide,
                           ),
-                        ),
-                      ),
-                      if (timeText.isNotEmpty) ...[
-                        const SizedBox(width: 3),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xCC000000),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            timeText,
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
+
+                          // 选中蒙层（仅覆盖海报区）
+                          AnimatedOpacity(
+                            opacity: isSelected ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: primaryColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(_innerRadius),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-
-              // 底部信息浮层（选中态时显示）
-              AnimatedOpacity(
-                opacity: isSelected ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.fromLTRB(6, 16, 6, 5),
-                    decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.vertical(
-                        bottom: Radius.circular(_outerRadius),
-                      ),
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.75),
                         ],
                       ),
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayShowName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            height: 1.1,
-                          ),
+
+                    // 底部时间区
+                    Container(
+                      height: timeBarHeight,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1A1A).withValues(alpha: 0.85),
+                        borderRadius: const BorderRadius.vertical(
+                          bottom: Radius.circular(_innerRadius),
                         ),
-                        const SizedBox(height: 1),
-                        Text(
-                          firstTheater,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Colors.white.withValues(alpha: 0.7),
-                            height: 1.1,
+                        boxShadow: [
+                          BoxShadow(
+                            color: statusColor.withValues(alpha: 0.25),
+                            blurRadius: 8,
+                            spreadRadius: 0,
                           ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        timeText,
+                        style: TextStyle(
+                          fontSize: timeFontSize,
+                          fontWeight: FontWeight.w600,
+                          color: statusColor,
+                          shadows: [
+                            Shadow(
+                              color: statusColor.withValues(alpha: 0.6),
+                              blurRadius: 6,
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ),
-            ],
+              );
+
+              if (isToday) {
+                cellContent = TodaySpotlight(
+                  color: primaryColor,
+                  child: cellContent,
+                );
+              }
+
+              return cellContent;
+            },
           ),
         ),
       ),
     );
+  }
 
-    if (isToday) {
-      cell = TodaySpotlight(
-        color: primaryColor,
-        child: cell,
+  Widget _buildPosterStack(
+    List<Map<String, dynamic>> events,
+    bool isOutside,
+    double posterAreaHeight,
+    double shortestSide,
+  ) {
+    final count = events.length;
+
+    if (count == 1) {
+      return _buildPosterThumbnail(
+        events.first,
+        isOutside: isOutside,
+        borderRadius: _innerRadius,
+        topmost: true,
       );
     }
 
-    return cell;
+    final topEvent = events[rotationIndex % count];
+    final middleEvent = events[(rotationIndex + 1) % count];
+    final bottomEvent = events[(rotationIndex + (count > 2 ? 2 : 1)) % count];
+
+    // 阶梯步进：下层依次向下偏移，露出上层底部
+    final stepOffset = posterAreaHeight * 0.06;
+    final visibleLayers = count > 3 ? 3 : count;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 底层
+        Positioned(
+          top: stepOffset * (visibleLayers - 1),
+          left: 0,
+          right: 0,
+          height: posterAreaHeight,
+          child: Opacity(
+            opacity: 0.35,
+            child: _buildPosterThumbnail(
+              bottomEvent,
+              isOutside: isOutside,
+              borderRadius: _innerRadius,
+            ),
+          ),
+        ),
+
+        // 中间层（>2 张时）
+        if (count > 2)
+          Positioned(
+            top: stepOffset,
+            left: 0,
+            right: 0,
+            height: posterAreaHeight,
+            child: Opacity(
+              opacity: 0.55,
+              child: _buildPosterThumbnail(
+                middleEvent,
+                isOutside: isOutside,
+                borderRadius: _innerRadius,
+              ),
+            ),
+          ),
+
+        // 顶层
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: posterAreaHeight,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 150),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: child,
+              );
+            },
+            child: _buildPosterThumbnail(
+              topEvent,
+              isOutside: isOutside,
+              borderRadius: _innerRadius,
+              topmost: true,
+              key: ValueKey<int>(rotationIndex),
+            ),
+          ),
+        ),
+
+        // 数量角标（多张时）
+        if (count > 1)
+          Positioned(
+            top: 0,
+            right: 0,
+            child: _buildCountBadge(count, shortestSide),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPosterThumbnail(
+    Map<String, dynamic> event, {
+    required bool isOutside,
+    double borderRadius = 4.0,
+    bool topmost = false,
+    Key? key,
+  }) {
+    final status = event['status'] as String? ?? 'unmarked';
+    final color = statusColor(status);
+    final coverPath = event['cover_path'] as String?;
+    final showName = event['show_name'] as String? ?? '未知';
+
+    Widget content = coverPath != null && coverPath.isNotEmpty
+        ? Image.file(
+            File(coverPath),
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            errorBuilder: (_, __, ___) =>
+                _buildPosterFallback(showName: showName, color: color),
+          )
+        : _buildPosterFallback(showName: showName, color: color);
+
+    if (isOutside) {
+      content = Opacity(opacity: 0.5, child: content);
+    }
+
+    return Container(
+      key: key,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(borderRadius),
+        color: color.withValues(alpha: isOutside ? 0.08 : 0.15),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: content,
+    );
+  }
+
+  Widget _buildPosterFallback({required String showName, required Color color}) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: 0.35),
+            color.withValues(alpha: 0.1),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          showName.length >= 2 ? showName.substring(0, 2) : showName,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountBadge(int count, double shortestSide) {
+    final badgeSize = shortestSide * 0.24;
+    final fontSize = (badgeSize * 0.45).clamp(8.0, 11.0);
+
+    return Container(
+      width: badgeSize,
+      height: badgeSize,
+      decoration: BoxDecoration(
+        color: const Color(0xCC000000),
+        borderRadius: BorderRadius.only(
+          topRight: Radius.circular(badgeSize * 0.45),
+          bottomLeft: Radius.circular(badgeSize * 0.45),
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    );
   }
 
   Color statusColorForEvent(Map<String, dynamic> event) {
