@@ -155,10 +155,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _onVerticalSwipe(DragEndDetails details) {
     if (details.primaryVelocity == null) return;
-    if (details.primaryVelocity! < -150) {
+    if (details.primaryVelocity! < -100) {
       // 向上滑动：折叠到周视图
       _collapseCalendar();
-    } else if (details.primaryVelocity! > 150) {
+    } else if (details.primaryVelocity! > 100) {
       // 向下滑动：展开到月视图
       _expandCalendar();
     }
@@ -526,8 +526,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         locale: 'zh_CN',
                         sixWeekMonthsEnforced: true,
                         formatAnimationDuration:
-                            const Duration(milliseconds: 1),
-                        formatAnimationCurve: Curves.linear,
+                            const Duration(milliseconds: 120),
+                        formatAnimationCurve: Curves.easeInOut,
                       ),
                     ),
                   ),
@@ -708,13 +708,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             ),
                           );
                         },
-                        childCount: _performances.length,
+                        childCount: _isCalendarExpanded
+                            ? min(_performances.length, 1)
+                            : _performances.length,
                       ),
                     ),
 
           // 底部呼吸空间
           SliverToBoxAdapter(
-            child: SizedBox(height: screenSize.width * 0.06),
+            child: SizedBox(
+                height: _isCalendarExpanded ? 0 : screenSize.width * 0.06),
           ),
         ],
       ),

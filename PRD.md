@@ -11,7 +11,7 @@
 
 | 日期 | 改动内容 | 关联文件/模块 |
 |------|---------|-------------|
-| 2026/06/15 | 月历首页反馈优化：月历容器高度精确为 6 行 + 分割线/手柄区余量；分割线上提至第六排下方并进一步调紧余量，月历底部叠加渐变遮罩、分割线下方增加向下渐变过渡，形成柔和预览感；月视图下 `CustomScrollView` 禁用滚动，上滑切换为周视图后下方票根列表可滚动；`_onHeaderHorizontalSwipe` 区分月/周视图，月视图切换月份、周视图切换周目；新增 `_changeWeek` 处理跨月事件加载与选中日期跟随 | `calendar_screen.dart` |
+| 2026/06/15 | 月历首页反馈优化：月历容器高度精确为 6 行 + 分割线/手柄区余量；分割线上提至第六排下方并进一步调紧余量，月历底部叠加渐变遮罩、分割线下方增加向下渐变过渡，形成柔和预览感；月视图下 `CustomScrollView` 禁用滚动并只显示单张票根预览，上滑切换为周视图后下方票根列表可滚动；`_onHeaderHorizontalSwipe` 区分月/周视图，月视图切换月份、周视图切换周目；新增 `_changeWeek` 处理跨月事件加载与选中日期跟随；TableCalendar 格式动画从 1ms 调至 120ms，垂直切换阈值从 150 降至 100 | `calendar_screen.dart` |
 | 2026/06/15 | 月历首页阶段二打磨（第五版）：拆分 `calendar_screen.dart` 为 `calendar_cell.dart` / `calendar_poster_cell.dart` / `poster_grid.dart`；多场海报从层叠改为均分网格（2场 1×2 / 3场 1×3 / 4场 2×2 / 5+场 2×2 + `+N`）；有演出格子左上角增加开场时间胶囊；选中态海报底部渐变浮现剧名+剧场名；选中态外发光改为双层阴影、统一圆角为 6、弱化蒙层；选中日期触发 `HapticFeedback.lightImpact()`；新增 `status_colors.dart` 统一状态色/图标 | `calendar_screen.dart`, `calendar_cell.dart`, `calendar_poster_cell.dart`, `poster_grid.dart`, `status_colors.dart` |
 | 2026/06/15 | 月历首页打磨迭代（第四版）：无事件日期格子文字数字垂直居中；今天高亮简化为仅文字/数字高亮，选中态框线弱化晕开与海报比例一致；选中有剧目日期时，底部 tab 导航上方新增提醒光感分隔符；`MainScreen` 通过回调监听 `CalendarScreen` 选中日期事件状态 | `calendar_screen.dart`, `main_screen.dart` |
 | 2026/06/15 | 月历首页打磨迭代（第三版）：海报单元格改为 cover 填充单元格而非固定 3:4 容器；月历高度调整为屏幕 58% 留出票根列表；禁用 TableCalendar 内部水平滑动避免上滑时左右晃动；增强光感分割线；无事件单元格自适应字体避免溢出 | `calendar_screen.dart` |
