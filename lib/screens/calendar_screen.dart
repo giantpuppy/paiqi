@@ -366,7 +366,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return Scaffold(
       body: CustomScrollView(
         controller: _scrollController,
-        physics: const BouncingScrollPhysics(),
+        physics: _isCalendarExpanded
+            ? const NeverScrollableScrollPhysics()
+            : const BouncingScrollPhysics(),
         slivers: [
           // 顶部 AppBar：月份标题 + 今天 + 筛选
           SliverAppBar(
