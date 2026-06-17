@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../database/database_helper.dart';
 import '../models/show.dart';
 import '../utils/status_colors.dart';
@@ -12,11 +13,15 @@ import 'show_management_screen.dart';
 class MonthlyWorkbenchScreen extends StatefulWidget {
   final int year;
   final int month;
+  final bool embedded;
+  final void Function(int year, int month)? onMonthChanged;
 
   const MonthlyWorkbenchScreen({
     super.key,
     required this.year,
     required this.month,
+    this.embedded = false,
+    this.onMonthChanged,
   });
 
   @override
@@ -29,6 +34,8 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
   late int _month;
   List<Show> _shows = [];
   Map<int, int> _showPerformanceCounts = {};
+  double? _dragStartX;
+  double? _dragCurrentX;
 
   @override
   void initState() {
@@ -36,6 +43,16 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
     _year = widget.year;
     _month = widget.month;
     _loadData();
+  }
+
+  @override
+  void didUpdateWidget(MonthlyWorkbenchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.year != widget.year || oldWidget.month != widget.month) {
+      _year = widget.year;
+      _month = widget.month;
+      _loadData();
+    }
   }
 
   Future<void> _loadData() async {
@@ -68,15 +85,26 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
   }
 
   void _changeMonth(int delta) {
+    HapticFeedback.lightImpact();
+    var newMonth = _month + delta;
+    var newYear = _year;
+    if (newMonth > 12) {
+      newMonth = 1;
+      newYear++;
+    } else if (newMonth < 1) {
+      newMonth = 12;
+      newYear--;
+    }
+
+    // 嵌入模式下由父组件驱动月份状态，避免重复加载数据
+    if (widget.onMonthChanged != null) {
+      widget.onMonthChanged!(newYear, newMonth);
+      return;
+    }
+
     setState(() {
-      _month += delta;
-      if (_month > 12) {
-        _month = 1;
-        _year++;
-      } else if (_month < 1) {
-        _month = 12;
-        _year--;
-      }
+      _year = newYear;
+      _month = newMonth;
     });
     _loadData();
   }
@@ -139,6 +167,40 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
     final gridSpacing = screenWidth * 0.03;
 
+    final content = GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (details) {
+        _dragStartX = details.globalPosition.dx;
+        _dragCurrentX = details.globalPosition.dx;
+      },
+      onHorizontalDragUpdate: (details) {
+        _dragCurrentX = details.globalPosition.dx;
+      },
+      onHorizontalDragEnd: (details) {
+        if (_dragStartX == null || _dragCurrentX == null) return;
+        final delta = _dragStartX! - _dragCurrentX!;
+        const threshold = 60.0;
+        if (delta > threshold) {
+          _changeMonth(1); // 左滑 → 下月
+        } else if (delta < -threshold) {
+          _changeMonth(-1); // 右滑 → 上月
+        }
+        _dragStartX = null;
+        _dragCurrentX = null;
+      },
+      child: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: kBrandPurple),
+            )
+          : _shows.isEmpty
+              ? _buildEmptyState()
+              : _buildPosterGrid(gridSpacing),
+    );
+
+    if (widget.embedded) {
+      return content;
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
@@ -148,57 +210,45 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context, true),
         ),
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_left, color: Colors.white70),
-              onPressed: () => _changeMonth(-1),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              iconSize: 28,
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _pickMonth,
-              child: Text(
-                '$_year年$_month月',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.arrow_right, color: Colors.white70),
-              onPressed: () => _changeMonth(1),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              iconSize: 28,
-            ),
-          ],
-        ),
+        title: _buildMonthSelector(),
         centerTitle: true,
       ),
-      body: GestureDetector(
-        onHorizontalDragEnd: (details) {
-          if (details.primaryVelocity == null) return;
-          if (details.primaryVelocity! > 0) {
-            _changeMonth(-1); // swipe right → previous month
-          } else if (details.primaryVelocity! < 0) {
-            _changeMonth(1); // swipe left → next month
-          }
-        },
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: kBrandPurple),
-              )
-            : _shows.isEmpty
-                ? _buildEmptyState()
-                : _buildPosterGrid(gridSpacing),
-      ),
+      body: content,
+    );
+  }
+
+  Widget _buildMonthSelector() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.arrow_left, color: Colors.white70),
+          onPressed: () => _changeMonth(-1),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          iconSize: 28,
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: _pickMonth,
+          child: Text(
+            '$_year年$_month月',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          icon: const Icon(Icons.arrow_right, color: Colors.white70),
+          onPressed: () => _changeMonth(1),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          iconSize: 28,
+        ),
+      ],
     );
   }
 
@@ -257,6 +307,7 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
 
     return GestureDetector(
       onTap: () => _navigateToShowManagement(show),
+      onLongPress: () => _showShowActionSheet(show),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
@@ -340,6 +391,29 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
                 ),
               ),
 
+            // Schedule flow indicator (top-left)
+            if (show.isInScheduleFlow)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: kBrandPurple.withValues(alpha: 0.4),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.check_circle,
+                    size: 14,
+                    color: kBrandPurple,
+                  ),
+                ),
+              ),
+
             // Show name at bottom with gradient overlay
             Positioned(
               left: 0,
@@ -373,5 +447,126 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showShowActionSheet(Show show) async {
+    final isInFlow = show.isInScheduleFlow;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4D4D4D),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: Icon(
+                  isInFlow ? Icons.remove_circle_outline : Icons.playlist_add_check,
+                  color: isInFlow ? Colors.orange : kBrandPurple,
+                ),
+                title: Text(isInFlow ? '移出排期流' : '导入排期流'),
+                subtitle: Text(
+                  isInFlow
+                      ? '该剧目将不再出现在排期流和月历中'
+                      : '将该剧目加入排期流，可在排期页查看',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _toggleShowInScheduleFlow(show);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit, color: Colors.white70),
+                title: const Text('编辑剧目'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _navigateToShowManagement(show);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Color(0xFFF54A45)),
+                title: const Text(
+                  '删除剧目',
+                  style: TextStyle(color: Color(0xFFF54A45)),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _confirmDeleteShow(show);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleShowInScheduleFlow(Show show) async {
+    final db = DatabaseHelper.instance;
+    final updated = show.copyWith(isInScheduleFlow: !show.isInScheduleFlow);
+    await db.updateShow(updated);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            updated.isInScheduleFlow
+                ? '「${show.name}」已导入排期流'
+                : '「${show.name}」已移出排期流',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      _loadData();
+    }
+  }
+
+  Future<void> _confirmDeleteShow(Show show) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          '确认删除',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          '删除「${show.name}」将同时删除所有场次和卡司数据，此操作不可恢复。',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: Color(0xFF8A8F98))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Color(0xFFF54A45))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final db = DatabaseHelper.instance;
+    await db.deleteShow(show.id!);
+    _loadData();
   }
 }

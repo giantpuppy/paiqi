@@ -82,31 +82,39 @@ class _MainScreenState extends State<MainScreen> {
               filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
               child: Container(
                 color: const Color(0xFF121212).withValues(alpha: 0.65),
-                child: NavigationBar(
-                  selectedIndex: _currentIndex,
-                  onDestinationSelected: (index) {
-                    if (index == 1 && _currentIndex == 1) {
-                      _ganttKey.currentState?.toggleMode();
-                      return;
-                    }
-                    setState(() {
-                      _currentIndex = index;
-                    });
-                  },
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                  overlayColor: WidgetStateProperty.all(Colors.transparent),
-                  destinations: [
-                    const NavigationDestination(
-                      icon: Icon(Icons.calendar_month_outlined),
-                      selectedIcon: Icon(Icons.calendar_month),
-                      label: '日历',
-                    ),
-                    ValueListenableBuilder<TimelineMode>(
-                      valueListenable: _scheduleModeNotifier,
-                      builder: (context, mode, child) {
-                        final isFocus = mode == TimelineMode.focus3Day;
-                        return NavigationDestination(
+                child: ValueListenableBuilder<TimelineMode>(
+                  valueListenable: _scheduleModeNotifier,
+                  builder: (context, mode, child) {
+                    final isFocus = mode == TimelineMode.focus3Day;
+                    return BottomNavigationBar(
+                      currentIndex: _currentIndex,
+                      onTap: (index) {
+                        if (index == 1 && _currentIndex == 1) {
+                          _ganttKey.currentState?.toggleMode();
+                          // 强制重建，确保 icon 使用 GanttScreen 的真实 modeNotifier
+                          setState(() {});
+                          return;
+                        }
+                        setState(() {
+                          _currentIndex = index;
+                        });
+                      },
+                      backgroundColor: Colors.transparent,
+                      elevation: 0,
+                      selectedItemColor: primaryColor,
+                      unselectedItemColor: const Color(0xFF8A8F98),
+                      selectedFontSize: 0,
+                      unselectedFontSize: 0,
+                      showSelectedLabels: false,
+                      showUnselectedLabels: false,
+                      type: BottomNavigationBarType.fixed,
+                      items: [
+                        const BottomNavigationBarItem(
+                          icon: Icon(Icons.calendar_month_outlined),
+                          activeIcon: Icon(Icons.calendar_month),
+                          label: '日历',
+                        ),
+                        BottomNavigationBarItem(
                           icon: AnimatedSwitcher(
                             duration: const Duration(milliseconds: 200),
                             transitionBuilder: (child, animation) {
@@ -125,34 +133,16 @@ class _MainScreenState extends State<MainScreen> {
                               key: ValueKey<bool>(isFocus),
                             ),
                           ),
-                          selectedIcon: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 200),
-                            transitionBuilder: (child, animation) {
-                              return FadeTransition(
-                                opacity: animation,
-                                child: ScaleTransition(
-                                  scale: animation,
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: ScheduleTabIcon(
-                              mode: isFocus
-                                  ? ScheduleTabIconMode.threeDay
-                                  : ScheduleTabIconMode.sevenDay,
-                              key: ValueKey<bool>(!isFocus),
-                            ),
-                          ),
                           label: '排期',
-                        );
-                      },
-                    ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.person_outline),
-                      selectedIcon: Icon(Icons.person),
-                      label: '我的',
-                    ),
-                  ],
+                        ),
+                        const BottomNavigationBarItem(
+                          icon: Icon(Icons.person_outline),
+                          activeIcon: Icon(Icons.person),
+                          label: '我的',
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

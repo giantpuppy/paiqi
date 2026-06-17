@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:intl/intl.dart';
 import '../database/database_helper.dart';
 import '../models/performance.dart';
@@ -8,8 +10,12 @@ import '../models/cast_member.dart';
 import '../utils/page_transitions.dart';
 import '../utils/status_colors.dart';
 import '../models/actor.dart';
-import '../widgets/status_badge.dart';
+import '../widgets/gantt/long_press_star_button.dart';
+import '../widgets/poster_fallback.dart';
+import '../widgets/bought_form_sheet.dart';
 import '../widgets/warm_spotlight.dart';
+import '../widgets/gantt/cast_list.dart';
+import '../widgets/gantt/gantt_decorations.dart';
 import 'unified_show_detail_screen.dart';
 import 'monthly_workbench_screen.dart';
 
@@ -75,6 +81,9 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   List<Map<String, dynamic>> _performances = [];
   Map<int, List<CastMember>> _castMap = {};
   bool _isLoading = true;
+  bool _isWorkbenchMode = false;
+  late int _workbenchYear;
+  late int _workbenchMonth;
 
   TimelineMode _mode = TimelineMode.focus3Day;
   final ValueNotifier<TimelineMode> modeNotifier = ValueNotifier(TimelineMode.focus3Day);
@@ -94,6 +103,9 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   // 左上角月份标题，随滚动实时更新
   final ValueNotifier<String> _monthTitle = ValueNotifier('');
 
+  // 当前屏幕中心聚焦的日期索引
+  final ValueNotifier<int> _focalDayIndex = ValueNotifier(30);
+
   double get _focusRowHeight => _availableHeight / 3;
   double get _microRowHeight => _availableHeight / 7;
   double get _currentRowHeight => _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
@@ -104,6 +116,9 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   void initState() {
     super.initState();
     modeNotifier.value = _mode;
+    final now = DateTime.now();
+    _workbenchYear = now.year;
+    _workbenchMonth = now.month;
     _initDays();
     _loadData();
     _scrollController.addListener(_onScroll);
@@ -112,9 +127,18 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
 
   void _updateMonthTitle() {
     if (!_scrollController.hasClients || _days.isEmpty) return;
+    if (_availableHeight <= 0) return;
     final idx = (_scrollController.offset / _currentRowHeight).floor().clamp(0, _days.length - 1);
     final d = _days[idx];
     _monthTitle.value = '${d.year}年${d.month}月';
+
+    // 聚焦日期：屏幕中心点所在的日期
+    final centerOffset = _scrollController.offset + _availableHeight / 2;
+    final focalIdx = (centerOffset / _currentRowHeight).floor().clamp(0, _days.length - 1);
+    if (focalIdx != _focalDayIndex.value) {
+      _focalDayIndex.value = focalIdx;
+      if (mounted) setState(() {});
+    }
   }
 
   /// 初始化日期列表：今天前30天 + 后60天
@@ -150,32 +174,46 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     setState(() => _days.insertAll(0, newDays));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollController.jumpTo(offsetBefore + 30 * _currentRowHeight);
+      _updateMonthTitle();
       _isLoadingMore = false;
     });
   }
 
   Future<void> _loadData() async {
-    final db = DatabaseHelper.instance;
-    final performances = await db.getAllPerformancesWithShow();
-    final castMap = <int, List<CastMember>>{};
-    for (final perf in performances) {
-      final perfId = perf['id'] as int;
-      final casts = await db.getCastMembersByPerformanceId(perfId);
-      castMap[perfId] = casts;
-    }
-    if (mounted) {
-      setState(() {
-        _performances = performances;
-        _castMap = castMap;
-        _isLoading = false;
-      });
-      // 数据加载完成后，滚动到今天为第一个可见行
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(30 * _currentRowHeight);
-          _updateMonthTitle();
-        }
-      });
+    try {
+      final db = DatabaseHelper.instance;
+      final performances = await db.getPerformancesInScheduleFlow();
+      // 原始列表可能是只读的，复制一份可修改的 map
+      final mutablePerformances = performances.map((p) => Map<String, dynamic>.from(p)).toList();
+      final castMap = <int, List<CastMember>>{};
+
+      for (final perf in mutablePerformances) {
+        final perfId = perf['id'] as int;
+        final casts = await db.getCastMembersByPerformanceId(perfId);
+        castMap[perfId] = casts;
+        perf['effective_status'] = perf['status'] ?? 'unmarked';
+      }
+
+      if (mounted) {
+        setState(() {
+          _performances = mutablePerformances;
+          _castMap = castMap;
+          _isLoading = false;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.jumpTo(30 * _currentRowHeight);
+            _updateMonthTitle();
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: $e')),
+        );
+      }
     }
   }
 
@@ -183,6 +221,7 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   void dispose() {
     _snapTimer?.cancel();
     _monthTitle.dispose();
+    _focalDayIndex.dispose();
     modeNotifier.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -193,14 +232,7 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   }
 
   /// 根据距离 today 的天数返回暗化透明度
-  double _dimAlphaForDay(DateTime day, DateTime today) {
-    final days = day.difference(today).inDays.abs();
-    if (days == 0) return 0.0;
-    if (days == 1) return 0.10;
-    if (days <= 3) return 0.25;
-    if (days <= 7) return 0.40;
-    return 0.50;
-  }
+  // ==================== 日期与演出数据 ====================
 
   /// 获取某天的所有演出（含 show 信息）
   List<Map<String, dynamic>> _getPerformancesForDay(DateTime day) {
@@ -210,94 +242,6 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   }
 
   // ==================== 状态操作 ====================
-
-  Future<void> _updateStatus(int perfId, String status) async {
-    final db = DatabaseHelper.instance;
-    final perf = await db.getPerformanceById(perfId);
-    if (perf == null) return;
-    await db.updatePerformance(perf.copyWith(status: status));
-    _loadData();
-  }
-
-  Future<void> _showBoughtForm(int perfId) async {
-    final seatController = TextEditingController();
-    final priceController = TextEditingController();
-    final actualPriceController = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('补充购票信息'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: seatController,
-              decoration: const InputDecoration(
-                labelText: '座位',
-                hintText: '如: 1楼-3排-5号',
-                prefixIcon: Icon(Icons.event_seat_outlined),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '票面价格',
-                hintText: '如: 580',
-                prefixIcon: Icon(Icons.confirmation_number_outlined),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: actualPriceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '实付价格',
-                hintText: '如: 480',
-                prefixIcon: Icon(Icons.payments_outlined),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('跳过'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true) {
-      final db = DatabaseHelper.instance;
-      final perf = await db.getPerformanceById(perfId);
-      if (perf != null) {
-        await db.updatePerformance(perf.copyWith(
-          status: 'bought',
-          seat: seatController.text.isNotEmpty ? seatController.text : null,
-          price: priceController.text.isNotEmpty
-              ? double.tryParse(priceController.text)
-              : null,
-          actualPrice: actualPriceController.text.isNotEmpty
-              ? double.tryParse(actualPriceController.text)
-              : null,
-        ));
-        _loadData();
-      }
-    } else if (result == false) {
-      await _updateStatus(perfId, 'bought');
-    }
-
-    seatController.dispose();
-    priceController.dispose();
-    actualPriceController.dispose();
-  }
 
   // ==================== 详情面板 ====================
 
@@ -350,33 +294,76 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: const Color(0xFF121212),
         elevation: 0,
         foregroundColor: Colors.white,
         centerTitle: false,
         title: _buildMonthTitle(),
         actions: [
-          // 管理台入口：直接跳转当前显示月份的海报网格
+          // 管理台入口：纯图标，点击切换工作台视图
           Container(
             margin: const EdgeInsets.only(right: 12),
             decoration: BoxDecoration(
-              color: kBrandPurple,
-              borderRadius: BorderRadius.circular(12),
+              color: _isWorkbenchMode
+                  ? kBrandPurple.withValues(alpha: 0.35)
+                  : kBrandPurple.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: kBrandPurple.withValues(alpha: 0.35),
+                width: 1,
+              ),
             ),
             child: IconButton(
-              onPressed: _openMonthlyWorkbenchFromCurrentTitle,
-              icon: const Icon(Icons.grid_view, size: 22),
-              color: Colors.white,
-              tooltip: '管理台',
+              onPressed: _toggleWorkbenchMode,
+              icon: Icon(
+                _isWorkbenchMode ? Icons.timeline_rounded : Icons.grid_view_rounded,
+                size: 20,
+              ),
+              color: kBrandPurple,
+              tooltip: _isWorkbenchMode ? '返回时间线' : '管理台',
             ),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _performances.isEmpty
-              ? _buildEmptyState()
-              : _buildTimeline(),
+      body: _isWorkbenchMode
+          ? _buildWorkbenchView()
+          : (_isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _performances.isEmpty
+                  ? _buildEmptyState()
+                  : _buildTimeline()),
     );
+  }
+
+  Widget _buildWorkbenchView() {
+    return MonthlyWorkbenchScreen(
+      year: _workbenchYear,
+      month: _workbenchMonth,
+      embedded: true,
+      onMonthChanged: (year, month) {
+        setState(() {
+          _workbenchYear = year;
+          _workbenchMonth = month;
+        });
+      },
+    );
+  }
+
+  void _toggleWorkbenchMode() {
+    if (!_isWorkbenchMode) {
+      // 进入工作台时，同步当前时间轴可见月份作为初始月份
+      final title = _monthTitle.value;
+      final parts = title.split('年');
+      if (parts.length == 2) {
+        final year = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1].replaceFirst('月', ''));
+        if (year != null && month != null) {
+          _workbenchYear = year;
+          _workbenchMonth = month;
+        }
+      }
+    }
+    setState(() => _isWorkbenchMode = !_isWorkbenchMode);
   }
 
   Widget _buildEmptyState() {
@@ -386,9 +373,19 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
         children: [
           const _BreathingIcon(icon: Icons.view_timeline_outlined),
           const SizedBox(height: 16),
-          const Text('暂无排期', style: TextStyle(fontSize: 18, color: Color(0xFF8A8F98))),
+          const Text('排期流为空', style: TextStyle(fontSize: 18, color: Color(0xFF8A8F98))),
           const SizedBox(height: 8),
-          const Text('点击右上角进入管理台', style: TextStyle(fontSize: 14, color: Color(0xFF7C7C7C))),
+          const Text(
+            '在管理台长按剧目导入排期流后，\n场次将显示在这里',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Color(0xFF7C7C7C)),
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: _toggleWorkbenchMode,
+            icon: const Icon(Icons.grid_view_rounded, size: 18),
+            label: const Text('去管理台导入'),
+          ),
         ],
       ),
     );
@@ -424,27 +421,90 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     return ValueListenableBuilder<String>(
       valueListenable: _monthTitle,
       builder: (context, title, child) {
-        final screenWidth = MediaQuery.of(context).size.width;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: screenWidth * 0.05,
-                fontWeight: FontWeight.w600,
-              ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.calendar_month,
-                size: screenWidth * 0.045,
-                color: Colors.white.withValues(alpha: 0.5),
-              ),
-            ],
-          );
+        final displayTitle = _isWorkbenchMode
+            ? '$_workbenchYear年$_workbenchMonth月'
+            : title;
+        return GestureDetector(
+          onTap: () => _showMonthPicker(),
+          behavior: HitTestBehavior.opaque,
+          child: Text(
+            displayTitle,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        );
       },
     );
+  }
+
+  Future<void> _showMonthPicker() async {
+    if (_isWorkbenchMode) {
+      final picked = await showModalBottomSheet<DateTime>(
+        context: context,
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (context) => _YearMonthPicker(
+          initialYear: _workbenchYear,
+          initialMonth: _workbenchMonth,
+        ),
+      );
+      if (picked != null && mounted) {
+        setState(() {
+          _workbenchYear = picked.year;
+          _workbenchMonth = picked.month;
+        });
+      }
+      return;
+    }
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _days.isEmpty ? DateTime.now() : _days[(_scrollController.offset / _currentRowHeight).floor().clamp(0, _days.length - 1)],
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      locale: const Locale('zh', 'CN'),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: kBrandPurple,
+              surface: const Color(0xFF1E1E1E),
+            ),
+            dialogBackgroundColor: const Color(0xFF181818),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked == null || !_scrollController.hasClients) return;
+
+    final target = DateTime(picked.year, picked.month, picked.day);
+    // 确保目标日期在 _days 范围内
+    if (target.isBefore(_days.first) || target.isAfter(_days.last)) {
+      final start = target.subtract(const Duration(days: 30));
+      _days = List.generate(91, (i) => DateTime(start.year, start.month, start.day + i));
+      setState(() {});
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final index = _days.indexWhere((d) => _isSameDay(d, target));
+      if (index >= 0) {
+        _scrollController.jumpTo(
+          (index * _currentRowHeight).clamp(
+            0.0,
+            _scrollController.position.maxScrollExtent,
+          ),
+        );
+        _updateMonthTitle();
+      }
+    });
   }
 
   // ==================== 剧场流时间轴 ====================
@@ -469,7 +529,7 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
             padding: EdgeInsets.zero,
             itemCount: _days.length,
             itemBuilder: (context, index) {
-              return _buildDayRow(index, today);
+              return _buildDayRow(index, today, _focalDayIndex.value);
             },
           );
         },
@@ -515,13 +575,15 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
         final oldRowHeight = previousMode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
         final newRowHeight = _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
 
-        // 用 floor 更保守：确保视口顶部始终是同一个 item
-        final firstVisibleIndex = (previousOffset / oldRowHeight).floor().clamp(0, _days.length - 1);
-        final targetOffset = firstVisibleIndex * newRowHeight;
+        // 以屏幕中心日期为锚点，切换后让它仍位于屏幕中心
+        final viewportCenter = previousOffset + _availableHeight / 2;
+        final focalIndex = (viewportCenter / oldRowHeight).floor().clamp(0, _days.length - 1);
+        final targetOffset = (focalIndex * newRowHeight) - (_availableHeight - newRowHeight) / 2;
 
         _scrollController.jumpTo(
           targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
         );
+        _updateMonthTitle();
       }
       // jumpTo 后强制 rebuild，让 _buildMonthTitle 使用新的 offset 计算正确月份
       if (mounted) setState(() {});
@@ -543,23 +605,44 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
 
   // ==================== 统一日期行（行高瞬间切换，避免 ListView 滚动冲突） ====================
 
-  Widget _buildDayRow(int index, DateTime today) {
+  Widget _buildDayRow(int index, DateTime today, int focalIndex) {
     final day = _days[index];
     final isToday = _isSameDay(day, today);
+    final isFocal = index == focalIndex;
     final dayPerfs = _getPerformancesForDay(day);
     final isFocus = _mode == TimelineMode.focus3Day;
     final targetHeight = isFocus ? _focusRowHeight : _microRowHeight;
     final screenWidth = MediaQuery.of(context).size.width;
     final labelWidth = screenWidth * (isFocus ? 0.18 : 0.13);
-    final dimAlpha = _dimAlphaForDay(day, today);
+    final hasPerformances = dayPerfs.isNotEmpty;
+    final isWeekend = day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
 
-    // today 行外层包裹 WarmSpotlight（矩形，borderRadius 0）
+    // 行背景：today 带极淡紫底，有演出正常，空行最暗
+    final rowBackground = isToday
+        ? kBrandPurple.withValues(alpha: 0.03)
+        : (hasPerformances ? const Color(0xFF121212) : const Color(0xFF0E0E0E));
+    final bottomBorderAlpha = hasPerformances ? 0.06 : 0.08;
+
+    // 焦点高亮只保留最中心一行
+    final focusDistance = (index - focalIndex).abs();
+    final baseFocusTintAlpha = focusDistance == 0 ? 0.12 : 0.0;
+
+    // 滚动波动：仅给最焦点行加一点轻微起伏
+    final scrollProgress = _scrollController.hasClients
+        ? _scrollController.offset / _currentRowHeight
+        : 0.0;
+    final wave = sin((scrollProgress + index * 0.12) * pi * 2) * 0.012;
+    final focusTintAlpha = (baseFocusTintAlpha + wave).clamp(0.0, 0.16);
+
     Widget rowContent = Container(
       height: targetHeight,
       decoration: BoxDecoration(
-        color: isToday ? kBrandPurple.withValues(alpha: 0.04) : const Color(0xFF121212),
+        color: rowBackground,
         border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
+          bottom: BorderSide(
+            color: Colors.white.withValues(alpha: bottomBorderAlpha),
+            width: 0.5,
+          ),
         ),
       ),
       child: Row(
@@ -588,100 +671,80 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // 大日期：聚焦模式显示 MM-DD，微观模式显示几号
+                // 大日期：M.D 格式
                 DefaultTextStyle(
                   style: TextStyle(
-                    fontSize: isFocus ? 14 : 16,
+                    fontSize: isFocus ? screenWidth * 0.038 : screenWidth * 0.042,
                     fontWeight: isFocus ? FontWeight.w700 : FontWeight.w800,
-                    color: isToday ? kBrandPurple : Colors.white.withValues(alpha: 0.9),
+                    color: isFocal
+                        ? kBrandPurple
+                        : (isToday ? kBrandPurple.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.9)),
                   ),
-                  child: Text(isFocus
-                      ? '${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}'
-                      : '${day.day}'),
+                  child: Text('${day.month}.${day.day}'),
                 ),
-                SizedBox(height: targetHeight * 0.008),
+                SizedBox(height: targetHeight * 0.012),
+                // 星期（放大）
                 DefaultTextStyle(
                   style: TextStyle(
-                    fontSize: isFocus ? 10 : 9,
-                    fontWeight: FontWeight.w500,
-                    color: isToday ? kBrandPurple.withValues(alpha: 0.8) : const Color(0xFF6B7280),
+                    fontSize: isFocus ? screenWidth * 0.028 : screenWidth * 0.026,
+                    fontWeight: FontWeight.w600,
+                    color: isFocal
+                        ? kBrandPurple.withValues(alpha: 0.85)
+                        : (isToday ? kBrandPurple.withValues(alpha: 0.6) : const Color(0xFF6B7280)),
                   ),
                   child: Text(isFocus
                       ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][day.weekday - 1]
                       : '周${['一', '二', '三', '四', '五', '六', '日'][day.weekday - 1]}'),
                 ),
-                // 今天指示（淡紫色光点，无文字）
-                Opacity(
-                  opacity: isFocus ? 1.0 : 0.0,
-                  child: _buildTodayBadge(day, isToday, screenWidth),
-                ),
               ],
             ),
           ),
-          // 右侧内容区
+          // 右侧内容区：周末带淡淡灰色底，与工作日区分
           Expanded(
-            child: dayPerfs.isEmpty
-                ? (isFocus
-                    ? Center(
-                        child: Text('无排期',
-                          style: TextStyle(color: Colors.white.withValues(alpha: 0.15), fontSize: 12)),
-                      )
-                    : const SizedBox())
-                : isFocus
-                    ? _buildFocusContent(dayPerfs, targetHeight, labelWidth, screenWidth, isToday)
-                    : _buildMicroContent(dayPerfs, targetHeight, screenWidth, isToday),
+            child: Container(
+              height: targetHeight,
+              color: isWeekend ? const Color(0xFF161616) : Colors.transparent,
+              child: hasPerformances
+                  ? (isFocus
+                      ? _buildFocusContent(dayPerfs, targetHeight, labelWidth, screenWidth, isToday)
+                      : _buildMicroContent(dayPerfs, targetHeight, screenWidth, isToday))
+                  : (isFocus ? const SizedBox() : const SizedBox()),
+            ),
           ),
         ],
       ),
     );
 
-    // 叠加远近明暗层（dimAlpha > 0 时）
-    if (dimAlpha > 0) {
-      rowContent = Stack(
-        children: [
-          rowContent,
-          Positioned.fill(
-            child: Container(
-              color: Colors.black.withValues(alpha: dimAlpha),
-            ),
-          ),
-        ],
-      );
+    // 空行叠加天鹅绒纹理
+    if (!hasPerformances && !isToday) {
+      rowContent = VelvetTexture(child: rowContent);
     }
 
-    // today 行包裹 WarmSpotlight（矩形呼吸光晕）
-    if (isToday) {
-      rowContent = WarmSpotlight(
-        borderRadius: 0,
-        color: kBrandPurple,
-        minAlpha: 0.08,
-        maxAlpha: 0.16,
-        minBlur: 8,
-        maxBlur: 16,
-        shouldAnimate: true,
-        child: rowContent,
-      );
-    }
-
-    // today 行侧边光（最左侧垂直渐变）
-    if (isToday) {
+    // 焦点高亮带：仅最中心行有淡紫底，边缘轻微柔和溢出
+    if (focusTintAlpha > 0.001) {
       rowContent = Stack(
         children: [
           rowContent,
           Positioned(
+            top: -targetHeight * 0.15,
+            bottom: -targetHeight * 0.15,
             left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(
-              width: 3,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [
-                    kBrandPurple.withValues(alpha: 0.2),
-                    Colors.transparent,
-                  ],
+            right: 0,
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      kBrandPurple.withValues(alpha: focusTintAlpha * 0.6),
+                      kBrandPurple.withValues(alpha: focusTintAlpha),
+                      kBrandPurple.withValues(alpha: focusTintAlpha * 0.6),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.35, 0.5, 0.65, 1.0],
+                  ),
                 ),
               ),
             ),
@@ -691,29 +754,6 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     }
 
     return rowContent;
-  }
-
-  Widget _buildTodayBadge(DateTime day, bool isToday, double screenWidth) {
-    if (!isToday) return const SizedBox.shrink();
-    // 今天：去掉文字，用淡紫色小光点/短横线标识
-    return Padding(
-      padding: EdgeInsets.only(top: screenWidth * 0.008),
-      child: Container(
-        width: screenWidth * 0.04,
-        height: 3,
-        decoration: BoxDecoration(
-          color: kBrandPurple.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(2),
-          boxShadow: [
-            BoxShadow(
-              color: kBrandPurple.withValues(alpha: 0.3),
-              blurRadius: 4,
-              spreadRadius: 0,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   // ==================== 聚焦模式内容（大海报卡片） ====================
@@ -765,14 +805,13 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     final coverPath = perf['cover_path'] as String?;
     final color = coverColorForShow(showId);
     final perfId = perf['id'] as int;
-    final status = perf['status'] as String? ?? 'unmarked';
+    final storedStatus = perf['status'] as String? ?? 'unmarked';
+    final effectiveStatus = perf['effective_status'] as String? ?? storedStatus;
 
-    // 卡司：全部显示
     final allCasts = _castMap[perfId] ?? [];
-
     final hasCover = coverPath != null && coverPath.isNotEmpty;
 
-    // 卡片容器：带彩色光晕 + 暗描边
+    // 卡片容器：彩色光晕 + 边缘溢光 + 底部投影 + 深色描边
     Widget card = Container(
       width: cardWidth,
       height: cardHeight,
@@ -780,22 +819,30 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(cardBorderRadius),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.08),
+          color: Colors.black.withValues(alpha: 0.30),
           width: 1,
         ),
         boxShadow: [
-          // 彩色光晕
+          // 主彩色光晕
           BoxShadow(
-            color: color.withValues(alpha: 0.22),
-            blurRadius: 18,
-            spreadRadius: 1,
+            color: color.withValues(alpha: 0.30),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 2),
           ),
-          // 底部投影，增加卡片与背景的分离感
+          // 边缘溢光
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 10,
+            color: color.withValues(alpha: 0.12),
+            blurRadius: 40,
+            spreadRadius: 4,
+            offset: const Offset(0, 0),
+          ),
+          // 底部投影，让卡片浮起来
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.40),
+            blurRadius: 12,
             spreadRadius: 0,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -804,31 +851,18 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Layer 1: 海报底图（无海报时用深色渐变）
+            // Layer 1: 海报底图（无海报时用双色渐变）
             if (hasCover)
-              Image.file(File(coverPath!), fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [color, coverColorForShow(showId + 3)],
-                    ),
-                  ),
-                ))
+              Image.file(
+                File(coverPath!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _buildGradientFallback(color, showId),
+              )
             else
-              Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [color, coverColorForShow(showId + 3)],
-                  ),
-                ),
-              ),
-            // Layer 2: 全屏蒙版（从 0.5 降到 0.28）
-            Container(color: Colors.black.withValues(alpha: 0.28)),
-            // Layer 2.5: 顶部加重渐变，确保文字在复杂海报上可读
+              _buildGradientFallback(color, showId),
+            // Layer 2: 全屏蒙版（降低让海报更透）
+            Container(color: Colors.black.withValues(alpha: 0.18)),
+            // Layer 2.5: 顶部加重渐变，确保文字可读
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -853,100 +887,69 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 时间 + 状态
+                    // 时间
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         if (time.isNotEmpty)
-                          Text('🕒 $time',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              shadows: [
-                                Shadow(color: Colors.black.withValues(alpha: 0.7), blurRadius: 4, offset: const Offset(0, 1)),
-                              ],
-                            )),
-                        const Spacer(),
-                        if (status == 'want_to_see' || status == 'bought')
-                          StatusBadge(
-                            label: status == 'bought' ? '已买' : '想看',
-                            color: statusColor(status),
-                            fontSize: 10,
-                            borderRadius: 10,
+                          StampTime(
+                            time: time,
+                            width: cardWidth,
+                            isToday: isToday,
                           ),
                       ],
                     ),
-                    // 卡司列表（视觉主体，上移）
+                    // 卡司列表（主演优先，最多 3 条），垂直居中
                     if (allCasts.isNotEmpty) ...[
                       SizedBox(height: cardHeight * 0.02),
                       Expanded(
-                        child: ListView.builder(
-                          padding: EdgeInsets.zero,
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: allCasts.length,
-                          itemBuilder: (context, i) {
-                            final c = allCasts[i];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 2),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    flex: 2,
-                                    child: Text(c.role,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.75),
-                                        fontSize: 11,
-                                        shadows: [
-                                          Shadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 3),
-                                        ],
-                                      ),
-                                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  ),
-                                  Text('|', style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
-                                  Expanded(
-                                    flex: 3,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 4),
-                                      child: Text(c.actorName,
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(alpha: 0.92),
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w500,
-                                          shadows: [
-                                            Shadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 3),
-                                          ],
-                                        ),
-                                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
+                        child: Center(
+                          child: FeaturedCastList(
+                            casts: allCasts,
+                            width: cardWidth,
+                            height: cardHeight,
+                            maxCount: 3,
+                          ),
                         ),
                       ),
                     ] else
                       const Spacer(),
-                    // 底部信息：无海报显示剧名，有海报只显示剧场
-                    if (!hasCover && showName != '未知') ...[
-                      Text(showName,
+                    // 底部信息：剧名常驻，剧场小字
+                    if (showName != '未知') ...[
+                      Text(
+                        showName,
                         style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.90),
+                          fontSize: cardWidth * 0.055,
                           fontWeight: FontWeight.w600,
-                          shadows: [Shadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 3)],
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.8),
+                              blurRadius: 6,
+                            ),
+                          ],
                         ),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       if (theater.isNotEmpty) SizedBox(height: cardHeight * 0.005),
                     ],
                     if (theater.isNotEmpty)
-                      Text(theater,
+                      Text(
+                        theater,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontSize: 10,
-                          shadows: [Shadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 3)],
+                          color: Colors.white.withValues(alpha: 0.65),
+                          fontSize: cardWidth * 0.045,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.7),
+                              blurRadius: 4,
+                            ),
+                          ],
                         ),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                   ],
                 ),
               ),
@@ -968,7 +971,7 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
                       begin: Alignment.bottomCenter,
                       end: Alignment.topCenter,
                       colors: [
-                        kWarmGold.withValues(alpha: 0.25),
+                        kWarmGold.withValues(alpha: 0.35),
                         Colors.transparent,
                       ],
                     ),
@@ -984,18 +987,60 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     if (isToday) {
       card = WarmSpotlight(
         borderRadius: cardBorderRadius,
-        minAlpha: 0.08,
-        maxAlpha: 0.16,
-        minBlur: 8,
-        maxBlur: 16,
+        color: kWarmGold,
+        minAlpha: 0.10,
+        maxAlpha: 0.20,
+        minBlur: 10,
+        maxBlur: 20,
+        duration: const Duration(milliseconds: 3500),
         shouldAnimate: true,
         child: card,
       );
     }
 
-    return GestureDetector(
-      onTap: () => _showPerformanceDetail(perf),
-      child: card,
+    return Stack(
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _showPerformanceDetail(perf),
+          child: card,
+        ),
+        Positioned(
+          top: cardHeight * 0.03,
+          right: cardWidth * 0.04,
+          child: LongPressStarButton(
+            status: effectiveStatus,
+            size: cardWidth * 0.09,
+            onStatusChanged: () => _toggleWantToSee(perfId, storedStatus),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _toggleWantToSee(int perfId, String currentStatus) async {
+    if (currentStatus != 'unmarked' && currentStatus != 'want_to_see') return;
+    final nextStatus = currentStatus == 'want_to_see' ? 'unmarked' : 'want_to_see';
+
+    final db = DatabaseHelper.instance;
+    final perf = await db.getPerformanceById(perfId);
+    if (perf == null) return;
+
+    await db.updatePerformance(perf.copyWith(status: nextStatus));
+
+    // 更新本地数据，避免全量刷新
+    setState(() {
+      final perfMap = _performances.firstWhere((p) => p['id'] == perfId);
+      perfMap['status'] = nextStatus;
+      perfMap['effective_status'] = nextStatus;
+    });
+  }
+
+  Widget _buildPosterFallback(Color color, int showId, String showName) {
+    return PosterFallback(
+      showId: showId,
+      showName: showName,
+      fontSize: 56,
     );
   }
 
@@ -1034,14 +1079,18 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
     bool isToday,
   ) {
     final showId = perf['show_id'] as int;
+    final showName = perf['show_name'] as String? ?? '未知';
     final time = (perf['time'] as String?)?.substring(0, 5) ?? '';
     final coverPath = perf['cover_path'] as String?;
     final color = coverColorForShow(showId);
+    final status = perf['effective_status'] as String? ??
+        (perf['status'] as String? ?? 'unmarked');
     final cardWidth = cardHeight * 0.75; // 3:4 比例
     final cardSpacing = cardWidth * 0.04;
     final cardBorderRadius = cardHeight * 0.05;
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () => _showPerformanceDetail(perf),
       child: Container(
         width: cardWidth,
@@ -1050,22 +1099,28 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(cardBorderRadius),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.08),
+            color: Colors.black.withValues(alpha: 0.30),
             width: 1,
           ),
           boxShadow: [
-            // 微弱彩色光晕
+            // 彩色光晕
             BoxShadow(
-              color: color.withValues(alpha: 0.18),
-              blurRadius: 10,
+              color: color.withValues(alpha: 0.25),
+              blurRadius: 14,
               spreadRadius: 1,
+            ),
+            // 边缘溢光
+            BoxShadow(
+              color: color.withValues(alpha: 0.10),
+              blurRadius: 28,
+              spreadRadius: 3,
             ),
             // 底部投影
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 6,
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 8,
               spreadRadius: 0,
-              offset: const Offset(0, 3),
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -1075,33 +1130,58 @@ class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin 
             fit: StackFit.expand,
             children: [
               coverPath != null && coverPath.isNotEmpty
-                  ? Image.file(File(coverPath), fit: BoxFit.cover)
-                  : Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [color, color.withValues(alpha: 0.6)],
-                        ),
-                      ),
-                    ),
-              // 黑色蒙版（从 0.35 降到 0.22）
+                  ? Image.file(
+                      File(coverPath),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _buildPosterFallback(color, showId, showName),
+                    )
+                  : _buildPosterFallback(color, showId, showName),
+              // 黑色蒙版
+              Container(color: Colors.black.withValues(alpha: 0.18)),
+              // 时间与状态点
               Container(
                 alignment: Alignment.center,
-                color: Colors.black.withValues(alpha: 0.22),
-                child: Text(time,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    shadows: [
-                      Shadow(color: Colors.black.withValues(alpha: 0.7), blurRadius: 4),
-                    ],
-                  )),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    StampTime(
+                      time: time,
+                      width: cardWidth,
+                      isToday: isToday,
+                    ),
+                    SizedBox(height: cardHeight * 0.04),
+                    Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: statusColor(status),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: statusColor(status).withValues(alpha: 0.5),
+                            blurRadius: 4,
+                            spreadRadius: 0,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGradientFallback(Color color, int showId) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color, coverColorForShow(showId + 3)],
         ),
       ),
     );
@@ -1163,6 +1243,8 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
   }
 
   bool _isWatched(Performance perf) {
+    // 优先使用持久化的 watched 状态；旧数据未迁移时按日期回退
+    if (perf.status == 'watched') return true;
     if (perf.status != 'bought') return false;
     final perfDate = DateTime.parse(perf.date);
     final today = DateTime.now();
@@ -1226,15 +1308,36 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
   }
 
   Future<void> _toggleStatus(Performance perf) async {
-    final next = perf.status == 'bought'
-        ? 'unmarked'
-        : perf.status == 'want_to_see'
-            ? 'bought'
-            : 'want_to_see';
-    await DatabaseHelper.instance.updatePerformance(perf.copyWith(status: next));
+    final current = perf.status ?? 'unmarked';
+    final next = switch (current) {
+      'watched' => 'unmarked',
+      'bought' => 'watched',
+      'want_to_see' => 'bought',
+      _ => 'want_to_see',
+    };
+
+    // 切到 bought 时弹出购票信息表单
+    if (next == 'bought') {
+      final ticket = await showBoughtFormSheet(context, performanceId: perf.id!);
+      await _applyStatus(perf.id!, 'bought');
+      if (ticket != null) {
+        final db = DatabaseHelper.instance;
+        await db.createTicket(ticket);
+      }
+      return;
+    }
+
+    await _applyStatus(perf.id!, next);
+  }
+
+  Future<void> _applyStatus(int perfId, String status) async {
+    final db = DatabaseHelper.instance;
+    final perf = await db.getPerformanceById(perfId);
+    if (perf == null) return;
+    await db.updatePerformance(perf.copyWith(status: status));
     setState(() {
       _performances = _performances.map((p) {
-        if (p.id == perf.id) return p.copyWith(status: next);
+        if (p.id == perfId) return p.copyWith(status: status);
         return p;
       }).toList();
     });
@@ -1750,6 +1853,178 @@ class _EditPerformanceSheetState extends State<_EditPerformanceSheet> {
           ),
         );
       },
+    );
+  }
+}
+
+// ==================== 年月滚动选择器（工作台模式） ====================
+
+class _YearMonthPicker extends StatefulWidget {
+  final int initialYear;
+  final int initialMonth;
+
+  const _YearMonthPicker({
+    required this.initialYear,
+    required this.initialMonth,
+  });
+
+  @override
+  State<_YearMonthPicker> createState() => _YearMonthPickerState();
+}
+
+class _YearMonthPickerState extends State<_YearMonthPicker> {
+  static const int _minYear = 2020;
+  static const int _maxYear = 2030;
+
+  late int _selectedYear;
+  late int _selectedMonth;
+  late FixedExtentScrollController _yearController;
+  late FixedExtentScrollController _monthController;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedYear = widget.initialYear.clamp(_minYear, _maxYear);
+    _selectedMonth = widget.initialMonth.clamp(1, 12);
+    _yearController = FixedExtentScrollController(
+      initialItem: _selectedYear - _minYear,
+    );
+    _monthController = FixedExtentScrollController(
+      initialItem: _selectedMonth - 1,
+    );
+  }
+
+  @override
+  void dispose() {
+    _yearController.dispose();
+    _monthController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+
+    return SafeArea(
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 顶部把手
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4D4D4D),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // 标题 + 按钮
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF8A8F98),
+                    ),
+                    child: const Text('取消'),
+                  ),
+                  const Spacer(),
+                  const Text(
+                    '选择年月',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      DateTime(_selectedYear, _selectedMonth),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: primaryColor,
+                    ),
+                    child: const Text(
+                      '确定',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 滚轮区域
+            SizedBox(
+              height: 220,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: CupertinoPicker(
+                      backgroundColor: Colors.transparent,
+                      itemExtent: 44,
+                      scrollController: _yearController,
+                      onSelectedItemChanged: (index) {
+                        setState(() => _selectedYear = _minYear + index);
+                      },
+                      children: List.generate(
+                        _maxYear - _minYear + 1,
+                        (index) => Center(
+                          child: Text(
+                            '${_minYear + index}年',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: (_minYear + index) == _selectedYear
+                                  ? Colors.white
+                                  : const Color(0xFF8A8F98),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: CupertinoPicker(
+                      backgroundColor: Colors.transparent,
+                      itemExtent: 44,
+                      scrollController: _monthController,
+                      onSelectedItemChanged: (index) {
+                        setState(() => _selectedMonth = index + 1);
+                      },
+                      children: List.generate(
+                        12,
+                        (index) => Center(
+                          child: Text(
+                            '${index + 1}月',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: (index + 1) == _selectedMonth
+                                  ? Colors.white
+                                  : const Color(0xFF8A8F98),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
     );
   }
 }

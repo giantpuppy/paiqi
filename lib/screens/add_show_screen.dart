@@ -8,10 +8,12 @@ import '../models/show.dart';
 import '../models/performance.dart';
 import '../models/cast_member.dart';
 import '../models/actor.dart';
+import '../models/ticket.dart';
 import '../utils/ocr_service.dart';
 import '../utils/knowledge_base.dart';
 import '../utils/cover_helper.dart';
 import '../utils/status_colors.dart';
+import 'show_management_screen.dart';
 
 class AddShowScreen extends StatefulWidget {
   final Show? initialShow;
@@ -536,6 +538,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
     }
 
     setState(() => _isSaving = true);
+    int? newShowId;
     try {
       final db = DatabaseHelper.instance;
       final showName = _nameController.text.trim();
@@ -559,6 +562,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
           coverPath: finalCoverPath,
         );
         await db.updateShow(updatedShow);
+        newShowId = updatedShow.id;
 
         // 构建 performances + casts 数据
         final perfDataList = <Map<String, dynamic>>[];
@@ -583,12 +587,11 @@ class _AddShowScreenState extends State<AddShowScreen> {
               showId: widget.initialShow!.id!,
               date: perfEntry.dateController.text,
               time: perfEntry.time,
-              price: double.tryParse(perfEntry.priceController.text),
-              actualPrice: double.tryParse(perfEntry.actualPriceController.text),
               status: 'unmarked',
               createdAt: DateTime.now().toIso8601String(),
             ),
             'casts': casts,
+            'ticket': _buildTicketFromPerfEntry(perfEntry),
           });
         }
         await db.replaceAllPerformances(widget.initialShow!.id!, perfDataList);
@@ -598,6 +601,7 @@ class _AddShowScreenState extends State<AddShowScreen> {
           name: showName,
           theater: theater,
           coverPath: finalCoverPath,
+          isInScheduleFlow: false,
           createdAt: DateTime.now().toIso8601String(),
         ));
 
@@ -623,15 +627,15 @@ class _AddShowScreenState extends State<AddShowScreen> {
               showId: show.id!,
               date: perfEntry.dateController.text,
               time: perfEntry.time,
-              price: double.tryParse(perfEntry.priceController.text),
-              actualPrice: double.tryParse(perfEntry.actualPriceController.text),
               status: 'unmarked',
               createdAt: DateTime.now().toIso8601String(),
             ),
             'casts': casts,
+            'ticket': _buildTicketFromPerfEntry(perfEntry),
           });
         }
         await db.replaceAllPerformances(show.id!, perfDataList);
+        newShowId = show.id;
       }
 
       // 保存到知识库（如果数据来自OCR识别）
@@ -671,7 +675,17 @@ class _AddShowScreenState extends State<AddShowScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(widget.isEditMode ? '剧目更新成功！' : '剧目添加成功！')));
-        Navigator.pop(context, true);
+        if (widget.isEditMode || newShowId == null) {
+          Navigator.pop(context, true);
+        } else {
+          // 新建剧目后直接进入剧目管理页，使用统一界面继续管理
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ShowManagementScreen(showId: newShowId!),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -690,6 +704,18 @@ class _AddShowScreenState extends State<AddShowScreen> {
     for (final p in _performances) { p.dispose(); }
     for (final r in _roles) { r.dispose(); }
     super.dispose();
+  }
+
+  // 根据 perfEntry 中的价格控件生成 Ticket；没有价格数据时返回 null。
+  Ticket? _buildTicketFromPerfEntry(_PerformanceEntry perfEntry) {
+    final price = double.tryParse(perfEntry.priceController.text.trim());
+    final actualPrice = double.tryParse(perfEntry.actualPriceController.text.trim());
+    if (price == null && actualPrice == null) return null;
+    return Ticket(
+      performanceId: 0, // 会在 replaceAllPerformances 中被替换
+      price: price,
+      actualPrice: actualPrice,
+    );
   }
 
   // ==================== BUILD ====================

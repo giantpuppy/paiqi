@@ -37,17 +37,17 @@ class _YearCalendarScreenState extends State<YearCalendarScreen> {
     final end = DateTime(_year, 12, 31);
     final db = DatabaseHelper.instance;
 
-    final performances = await db.getPerformancesByDateRange(
+    final performances = await db.getPerformancesInScheduleFlowByDateRange(
       _dateFormat.format(start),
       _dateFormat.format(end),
     );
 
     final events = <DateTime, List<Map<String, dynamic>>>{};
-    for (final p in performances) {
-      final map = p.toMap();
+    for (final map in performances) {
       final status = map['status'] as String? ?? 'unmarked';
       if (status == 'unmarked') continue;
-      final date = _dateFormat.parse(p.date);
+      final dateStr = map['date'] as String;
+      final date = _dateFormat.parse(dateStr);
       final normalized = DateTime(date.year, date.month, date.day);
       if (!events.containsKey(normalized)) {
         events[normalized] = [];

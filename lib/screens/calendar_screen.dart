@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:lunar/lunar.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../database/database_helper.dart';
 import '../utils/page_transitions.dart';
@@ -10,7 +11,6 @@ import '../utils/status_colors.dart' as status_colors;
 import '../widgets/animated_list_item.dart';
 import '../widgets/breathing_icon.dart';
 import '../widgets/calendar/calendar_cell.dart';
-import '../widgets/status_badge.dart';
 import '../widgets/status_dot.dart';
 import '../widgets/ticket_clipper.dart';
 import 'add_show_screen.dart';
@@ -57,7 +57,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime? _lastTappedDay;
   int _posterRotationIndex = 0;
   CalendarFormat _calendarFormat = CalendarFormat.month;
-  CalendarFilter _filter = CalendarFilter.bought;
+  CalendarFilter _filter = CalendarFilter.all;
   List<Map<String, dynamic>> _performances = [];
   Map<DateTime, List<Map<String, dynamic>>> _events = {};
   bool _isLoading = false;
@@ -73,7 +73,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     _focusedDay = widget.initialFocusedDay ?? DateTime.now();
     _selectedDay = _focusedDay;
-    _filter = widget.initialFilter ?? CalendarFilter.bought;
+    _filter = widget.initialFilter ?? CalendarFilter.all;
     _loadEventsForMonth(_focusedDay);
     _loadPerformancesForDate(_focusedDay);
     _scrollController.addListener(_onScroll);
@@ -88,10 +88,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   bool _shouldInclude(Map<String, dynamic> perf) {
     final status = perf['status'] as String? ?? 'unmarked';
-    if (status == 'unmarked') return false;
     switch (_filter) {
       case CalendarFilter.all:
-        return status == 'want_to_see' ||
+        // 「全部」包含排期流内的所有状态
+        return status == 'unmarked' ||
+            status == 'want_to_see' ||
             status == 'bought' ||
             status == 'watched';
       case CalendarFilter.wantToSee:
@@ -108,7 +109,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final endOfMonth = DateTime(month.year, month.month + 1, 0);
 
     final db = DatabaseHelper.instance;
-    final performances = await db.getPerformancesWithShowByDateRange(
+    final performances = await db.getPerformancesInScheduleFlowByDateRange(
       _dateFormat.format(startOfMonth),
       _dateFormat.format(endOfMonth),
     );
@@ -138,15 +139,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Future<void> _loadPerformancesForDate(DateTime date) async {
     setState(() => _isLoading = true);
 
-    final db = DatabaseHelper.instance;
-    final dateStr = _dateFormat.format(date);
-    final performances = await db.getPerformancesWithShowByDate(dateStr);
+    try {
+      final db = DatabaseHelper.instance;
+      final dateStr = _dateFormat.format(date);
+      final rawPerformances = await db.getPerformancesInScheduleFlowWithTicketsByDate(dateStr);
 
-    setState(() {
-      _performances = performances.where(_shouldInclude).toList();
-      _isLoading = false;
-    });
-    _notifySelectedDayHasEvent();
+      // sqflite rawQuery 返回的 Map 可能是不可变的，需要复制后再传给下游。
+      final performances = rawPerformances.map(Map<String, dynamic>.from).toList();
+
+      if (mounted) {
+        setState(() {
+          _performances = performances.where(_shouldInclude).toList();
+          _isLoading = false;
+        });
+      }
+      _notifySelectedDayHasEvent();
+    } catch (e, stack) {
+      debugPrint('加载选中日期演出失败: $e');
+      debugPrint(stack.toString());
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   bool get _selectedDayHasEvent {
@@ -248,6 +262,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
     // 周视图行高，给海报、日期圆标和 TableCalendar 内部边距留足空间
     return (screenWidth * 0.22).clamp(80.0, 120.0);
+  }
+
+  String _buildSelectedDayLabel() {
+    final day = _selectedDay ?? _focusedDay;
+    final lunar = Lunar.fromDate(day);
+    final lunarMonth = lunar.getMonthInChinese();
+    final lunarDay = lunar.getDayInChinese();
+    return '${day.day}日 ${lunarMonth}月$lunarDay';
   }
 
   void _onDaySelected(DateTime selectedDay, {bool fromUser = true}) {
@@ -713,7 +735,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               child: Row(
                 children: [
                   Text(
-                    '${_selectedDay?.day ?? _focusedDay.day}日 ${_weekdayFormat.format(_selectedDay ?? _focusedDay)}',
+                    _buildSelectedDayLabel(),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
@@ -785,15 +807,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  String _statusLabel(String status) {
-    return switch (status) {
-      'want_to_see' => '想看',
-      'bought' => '已买',
-      'watched' => '已观演',
-      _ => '未标记',
-    };
-  }
-
   // 大麦风格票根卡片
   Widget _buildTicketCard(Map<String, dynamic> perf, String status,
       Color statusColor, String? coverPath, int showId) {
@@ -803,7 +816,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final rawTime = perf['time'] as String? ?? '';
     final date = rawDate.length >= 10 ? rawDate.substring(5) : rawDate;
     final time = rawTime.isNotEmpty ? rawTime.substring(0, 5) : '';
-    final seat = perf['seat'] as String? ?? '';
+    final seat = perf['ticket_seat'] as String? ?? '';
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -971,14 +984,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       ),
                     ),
                   ),
-                  // 右侧状态
+                  // 右侧状态区：只显示图标
                   SizedBox(
                     width: statusAreaWidth,
                     child: Center(
-                      child: StatusBadge(
-                        label: _statusLabel(status),
+                      child: Icon(
+                        status_colors.statusIcon(status),
                         color: statusColor,
-                        fontSize: 10,
+                        size: (cardHeight * 0.22).clamp(20.0, 28.0),
                       ),
                     ),
                   ),
@@ -1165,7 +1178,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ),
             SizedBox(height: 8),
             Text(
-              '在甘特图标记「想看」或「已买」后，\n场次会显示在这里',
+              '在排期流中添加或标记场次后，\n场次会显示在这里',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,

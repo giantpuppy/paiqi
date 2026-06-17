@@ -1,6 +1,7 @@
 import '../models/performance.dart';
 import '../models/show.dart';
 import '../models/cast_member.dart';
+import '../models/ticket.dart';
 
 enum TimeSlice { all, year, month }
 
@@ -45,6 +46,9 @@ class ProfileStats {
   // 时段偏好
   final Map<String, int> timeSlotDistribution;
 
+  // 想看清单
+  final List<Performance> wantToSeePerformances;
+
   const ProfileStats({
     required this.timeSlice,
     required this.totalSessions,
@@ -59,6 +63,7 @@ class ProfileStats {
     required this.actorRanking,
     required this.theaterDistribution,
     required this.timeSlotDistribution,
+    required this.wantToSeePerformances,
   });
 
   int get maxMonthlyValue => monthlySessions.isEmpty
@@ -75,29 +80,45 @@ class ProfileStats {
     required List<Performance> performances,
     required List<Show> shows,
     required List<CastMember> castMembers,
+    required List<Ticket> tickets,
   }) {
     final filtered = _filterByTimeSlice(performances, slice);
 
-    // 已购买场次
+    // 想看清单（不受 bought/watched 过滤影响，但受时间切片影响）
+    final wantToSeePerformances = filtered
+        .where((p) => p.status == 'want_to_see')
+        .toList();
+
+    // 按 performanceId 聚合 ticket（取首条）
+    final ticketMap = <int, Ticket>{};
+    for (final t in tickets) {
+      ticketMap.putIfAbsent(t.performanceId, () => t);
+    }
+
+    // 已购买 / 已观演场次（优先使用持久化状态；旧数据回退到日期规则）
     final boughtPerformances = filtered
-        .where((p) => p.status == 'bought')
+        .where((p) => p.status == 'bought' || p.status == 'watched')
         .toList();
 
     // Hero 指标
     final totalSessions = boughtPerformances.length;
     final now = DateTime.now();
     final watchedSessions = boughtPerformances.where((p) {
+      if (p.status == 'watched') return true;
       final date = DateTime.tryParse(p.date);
       return date != null && date.isBefore(now);
     }).length;
     final upcomingSessions = totalSessions - watchedSessions;
     final totalPaid = boughtPerformances.fold(
       0.0,
-      (sum, p) => sum + (p.actualPrice ?? p.price ?? 0),
+      (sum, p) {
+        final t = ticketMap[p.id];
+        return sum + (t?.actualPrice ?? t?.price ?? 0);
+      },
     );
     final faceValue = boughtPerformances.fold(
       0.0,
-      (sum, p) => sum + (p.price ?? 0),
+      (sum, p) => sum + (ticketMap[p.id]?.price ?? 0),
     );
     final savedValue = faceValue - totalPaid > 0 ? faceValue - totalPaid : 0.0;
     final totalDurationHours = totalSessions * 2.5;
@@ -164,6 +185,7 @@ class ProfileStats {
       actorRanking: actorRanking,
       theaterDistribution: theaterDistribution,
       timeSlotDistribution: timeSlotCounts,
+      wantToSeePerformances: wantToSeePerformances,
     );
   }
 

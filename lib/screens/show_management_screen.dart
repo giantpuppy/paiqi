@@ -5,9 +5,11 @@ import '../database/database_helper.dart';
 import '../models/show.dart';
 import '../models/performance.dart';
 import '../models/cast_member.dart';
+import '../models/ticket.dart';
 import '../utils/status_colors.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/breathing_icon.dart';
+import '../widgets/bought_form_sheet.dart';
 
 /// 剧目管理页
 /// 展示单个剧目的详细信息、所有场次列表，支持编辑和删除
@@ -28,6 +30,7 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
   Show? _show;
   List<Performance> _performances = [];
   Map<int, List<CastMember>> _castMap = {};
+  Map<int, Ticket> _ticketMap = {};
 
   @override
   void initState() {
@@ -40,7 +43,28 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
     final db = DatabaseHelper.instance;
 
     final show = await db.getShowById(widget.showId);
-    final perfs = await db.getPerformancesByShowId(widget.showId);
+    final perfMaps = await db.getPerformancesWithTicketsByShowId(widget.showId);
+    final perfs = perfMaps.map((m) => Performance.fromMap(m)).toList();
+
+    // 从 JOIN 结果中提取每个演出的首条 ticket
+    final ticketMap = <int, Ticket>{};
+    for (final m in perfMaps) {
+      final perfId = m['id'] as int;
+      final ticketId = m['ticket_id'] as int?;
+      if (ticketId != null) {
+        ticketMap[perfId] = Ticket(
+          id: ticketId,
+          performanceId: perfId,
+          seat: m['ticket_seat'] as String?,
+          price: m['ticket_price'] != null
+              ? (m['ticket_price'] as num).toDouble()
+              : null,
+          actualPrice: m['ticket_actual_price'] != null
+              ? (m['ticket_actual_price'] as num).toDouble()
+              : null,
+        );
+      }
+    }
 
     // Batch load casts for all performances
     final perfIds = perfs.map((p) => p.id!).toList();
@@ -51,6 +75,7 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
         _show = show;
         _performances = perfs;
         _castMap = castMap;
+        _ticketMap = ticketMap;
         _isLoading = false;
       });
     }
@@ -89,6 +114,27 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
     await db.deleteShow(widget.showId);
     if (mounted) {
       Navigator.pop(context, true);
+    }
+  }
+
+  Future<void> _toggleScheduleFlow() async {
+    if (_show == null) return;
+    final db = DatabaseHelper.instance;
+    final updated = _show!.copyWith(isInScheduleFlow: !_show!.isInScheduleFlow);
+    await db.updateShow(updated);
+    setState(() => _show = updated);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            updated.isInScheduleFlow
+                ? '已加入排期流，场次将显示在排期页和月历中'
+                : '已移出排期流，场次不再显示在排期页和月历中',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -379,8 +425,10 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
   }
 
   Future<void> _editPerformance(Performance perf) async {
-    final seatController = TextEditingController(text: perf.seat ?? '');
-    final priceController = TextEditingController(text: perf.price?.toString() ?? '');
+    final ticket = _ticketMap[perf.id];
+    final seatController = TextEditingController(text: ticket?.seat ?? '');
+    final priceController = TextEditingController(
+        text: ticket?.price?.toString() ?? '');
 
     final result = await showModalBottomSheet<bool>(
       context: context,
@@ -459,11 +507,19 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
 
     if (result == true && mounted) {
       final db = DatabaseHelper.instance;
-      final updated = perf.copyWith(
-        seat: seatController.text.trim().isNotEmpty ? seatController.text.trim() : null,
-        price: double.tryParse(priceController.text.trim()),
-      );
-      await db.updatePerformance(updated);
+      final seat = seatController.text.trim().isNotEmpty ? seatController.text.trim() : null;
+      final price = double.tryParse(priceController.text.trim());
+
+      if (ticket != null) {
+        await db.updateTicket(ticket.copyWith(seat: seat, price: price));
+      } else {
+        await db.createTicket(Ticket(
+          performanceId: perf.id!,
+          seat: seat,
+          price: price,
+        ));
+      }
+
       seatController.dispose();
       priceController.dispose();
       if (mounted) {
@@ -515,10 +571,26 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
 
   Future<void> _cycleStatus(Performance perf) async {
     final next = switch (perf.status) {
-      'bought' => 'unmarked',
+      'watched' => 'unmarked',
+      'bought' => 'watched',
       'want_to_see' => 'bought',
       _ => 'want_to_see',
     };
+
+    if (next == 'bought') {
+      final ticket = await showBoughtFormSheet(context, performanceId: perf.id!);
+      final db = DatabaseHelper.instance;
+      await db.updatePerformance(perf.copyWith(status: 'bought'));
+      if (ticket != null) {
+        await db.createTicket(ticket);
+      }
+      if (mounted) {
+        _loadData();
+        Navigator.pop(context, true);
+      }
+      return;
+    }
+
     final db = DatabaseHelper.instance;
     await db.updatePerformance(perf.copyWith(status: next));
     if (mounted) {
@@ -634,7 +706,11 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
       children: [
         // Top section: poster + show info
         _buildHeaderSection(),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
+
+        // Schedule flow action card (core action)
+        _buildScheduleFlowCard(),
+        const SizedBox(height: 28),
 
         // Performance list section
         Row(
@@ -787,12 +863,123 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
     );
   }
 
+  Widget _buildScheduleFlowCard() {
+    final isInFlow = _show!.isInScheduleFlow;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isInFlow
+            ? const Color(0xFF34D399).withValues(alpha: 0.08)
+            : kBrandPurple.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isInFlow
+              ? const Color(0xFF34D399).withValues(alpha: 0.35)
+              : kBrandPurple.withValues(alpha: 0.4),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (isInFlow ? const Color(0xFF34D399) : kBrandPurple)
+                .withValues(alpha: 0.1),
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isInFlow ? Icons.check_circle : Icons.schedule,
+                color: isInFlow ? const Color(0xFF34D399) : kBrandPurple,
+                size: 24,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isInFlow ? '已在排期流' : '未加入排期流',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: isInFlow
+                            ? const Color(0xFF34D399)
+                            : kBrandPurple,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isInFlow
+                          ? '该剧目及 ${_performances.length} 个场次会显示在排期页和月历中'
+                          : '加入排期流后，该剧目及所有场次将显示在排期页和月历中',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.55),
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _toggleScheduleFlow,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isInFlow
+                    ? const Color(0xFF34D399).withValues(alpha: 0.15)
+                    : kBrandPurple,
+                foregroundColor: isInFlow
+                    ? const Color(0xFF34D399)
+                    : Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: isInFlow
+                        ? const Color(0xFF34D399).withValues(alpha: 0.4)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+              icon: Icon(
+                isInFlow ? Icons.remove_circle_outline : Icons.add_circle_outline,
+                size: 18,
+              ),
+              label: Text(
+                isInFlow ? '移出排期流' : '加入排期流',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPerformanceItem(Performance perf, int index) {
     final date = perf.date;
     final time = perf.time?.substring(0, 5) ?? '';
     final status = perf.status ?? 'unmarked';
     final color = statusColor(status);
     final casts = _castMap[perf.id] ?? [];
+    final ticket = _ticketMap[perf.id];
+    final seat = ticket?.seat;
+    final price = ticket?.price;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -853,19 +1040,19 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
                 ],
               ),
               // Seat + price info
-              if ((perf.seat != null && perf.seat!.isNotEmpty) || perf.price != null)
+              if ((seat != null && seat.isNotEmpty) || price != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Row(
                     children: [
-                      if (perf.seat != null && perf.seat!.isNotEmpty)
+                      if (seat != null && seat.isNotEmpty)
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.event_seat, size: 12, color: Colors.white.withValues(alpha: 0.4)),
                             const SizedBox(width: 4),
                             Text(
-                              perf.seat!,
+                              seat,
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.white.withValues(alpha: 0.6),
@@ -873,16 +1060,16 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
                             ),
                           ],
                         ),
-                      if (perf.seat != null && perf.seat!.isNotEmpty && perf.price != null)
+                      if (seat != null && seat.isNotEmpty && price != null)
                         Container(
                           width: 1,
                           height: 10,
                           margin: const EdgeInsets.symmetric(horizontal: 8),
                           color: Colors.white.withValues(alpha: 0.1),
                         ),
-                      if (perf.price != null)
+                      if (price != null)
                         Text(
-                          '¥${perf.price!.toStringAsFixed(0)}',
+                          '¥${price.toStringAsFixed(0)}',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.white.withValues(alpha: 0.6),

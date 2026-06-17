@@ -29,6 +29,7 @@ class LocalUser {
 class UserService {
   static const _usersKey = 'local_users_list';
   static const _currentUserKey = 'local_current_user';
+  static const _autoLoginUserKey = 'local_auto_login_user';
   static const _salt = 'paiqi_app_salt_v1';
 
   static String _hashPassword(String password) {
@@ -93,6 +94,24 @@ class UserService {
     return null;
   }
 
+  /// 设置自动登录用户（下次启动直接进主界面）
+  static Future<void> setAutoLoginUser(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_autoLoginUserKey, username.trim());
+  }
+
+  /// 获取自动登录用户
+  static Future<String?> getAutoLoginUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_autoLoginUserKey);
+  }
+
+  /// 清除自动登录状态
+  static Future<void> clearAutoLoginUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_autoLoginUserKey);
+  }
+
   /// 获取当前登录用户
   static Future<String?> getCurrentUsername() async {
     final prefs = await SharedPreferences.getInstance();
@@ -103,6 +122,7 @@ class UserService {
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_currentUserKey);
+    await prefs.remove(_autoLoginUserKey);
   }
 
   /// 删除用户（同时清理其数据库文件/本地存储）
@@ -131,6 +151,20 @@ class UserService {
   static Future<bool> hasAnyUser() async {
     final users = await getAllUsers();
     return users.isNotEmpty;
+  }
+
+  /// 从备份恢复用户列表（不覆盖现有用户，只追加不存在的）
+  static Future<void> restoreUsers(List<dynamic> usersJson) async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = await getAllUsers();
+    for (final json in usersJson) {
+      final map = json as Map<String, dynamic>;
+      final username = map['username'] as String;
+      if (!existing.any((u) => u.username == username)) {
+        existing.add(LocalUser.fromMap(map));
+      }
+    }
+    await prefs.setString(_usersKey, jsonEncode(existing.map((u) => u.toMap()).toList()));
   }
 
   /// 初始化：如果没有任何用户，把现有数据作为"默认用户"

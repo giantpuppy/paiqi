@@ -3,10 +3,13 @@ class Performance {
   int showId;
   String date;
   String? time;
+  @Deprecated('座位已迁移到 tickets 表，新代码请通过 ticket.seat 读取')
   String? seat;
+  @Deprecated('票面价格已迁移到 tickets 表，新代码请通过 ticket.price 读取')
   double? price;     // 票面价格
+  @Deprecated('实付价格已迁移到 tickets 表，新代码请通过 ticket.actualPrice 读取')
   double? actualPrice; // 实付价格
-  String? status; // unmarked | want_to_see | bought（watched 由 UI 层计算：bought + 日期已过）
+  String? status; // unmarked | want_to_see | bought | watched
   String? createdAt;
 
   Performance({
@@ -14,9 +17,9 @@ class Performance {
     required this.showId,
     required this.date,
     this.time,
-    this.seat,
-    this.price,
-    this.actualPrice,
+    @Deprecated('使用 Ticket 模型') this.seat,
+    @Deprecated('使用 Ticket 模型') this.price,
+    @Deprecated('使用 Ticket 模型') this.actualPrice,
     this.status,
     this.createdAt,
   });
@@ -54,9 +57,9 @@ class Performance {
     int? showId,
     String? date,
     String? time,
-    String? seat,
-    double? price,
-    double? actualPrice,
+    @Deprecated('使用 Ticket 模型') String? seat,
+    @Deprecated('使用 Ticket 模型') double? price,
+    @Deprecated('使用 Ticket 模型') double? actualPrice,
     String? status,
     String? createdAt,
   }) {

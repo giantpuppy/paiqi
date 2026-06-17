@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'database/database_helper.dart';
+import 'services/schedule_import_service.dart';
 import 'services/user_service.dart';
 import 'utils/seed_data.dart';
 import 'screens/main_screen.dart';
@@ -12,15 +13,22 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN');
 
+  final autoLoginUser = await UserService.getAutoLoginUser();
   final currentUser = await UserService.getCurrentUsername();
-  if (currentUser != null) {
-    await DatabaseHelper.switchUser(currentUser);
+  final effectiveUser = autoLoginUser ?? currentUser;
+
+  if (effectiveUser != null) {
+    await DatabaseHelper.switchUser(effectiveUser);
+    final importResult = await ScheduleImportService.importBundleIfNeeded(effectiveUser);
+    if (kDebugMode && importResult != null) {
+      debugPrint('ScheduleImportService: $importResult');
+    }
   }
 
   if (kDebugMode) {
     await seedTestData();
   }
-  runApp(PaiqiApp(initialUser: currentUser));
+  runApp(PaiqiApp(initialUser: effectiveUser));
 }
 
 class PaiqiApp extends StatelessWidget {

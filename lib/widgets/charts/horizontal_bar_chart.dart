@@ -113,43 +113,49 @@ class _HorizontalBarChartContentState
           ...displayList.asMap().entries.map((entry) {
             final index = entry.key;
             final item = entry.value;
-            final progress =
-                widget.maxValue > 0 ? item.value / widget.maxValue : 0.0;
             final isTop3 = index < 3;
             final barColor = isTop3 ? ChartTheme.watched : widget.accentColor;
 
             return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return Row(
-                    children: [
-                      SizedBox(
-                        width: 24,
-                        child: Text(
-                          '${index + 1}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: isTop3 ? ChartTheme.watched : ChartTheme.muted,
-                          ),
-                        ),
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: isTop3 ? ChartTheme.watched : ChartTheme.muted,
                       ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 80,
-                        child: Text(
-                          item.label,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: ChartTheme.value,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    flex: 2,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 72),
+                      child: Text(
+                        item.label,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: ChartTheme.value,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Stack(
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final barWidth = constraints.maxWidth;
+                        final progress = widget.maxValue > 0
+                            ? item.value / widget.maxValue
+                            : 0.0;
+                        return Stack(
                           children: [
                             Container(
                               height: 6,
@@ -161,7 +167,7 @@ class _HorizontalBarChartContentState
                             AnimatedContainer(
                               duration: const Duration(milliseconds: 600),
                               curve: Curves.easeOutCubic,
-                              width: constraints.maxWidth * progress,
+                              width: barWidth * progress,
                               height: 6,
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
@@ -174,19 +180,23 @@ class _HorizontalBarChartContentState
                               ),
                             ),
                           ],
-                        ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 18,
+                    child: Text(
+                      '${item.value}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: ChartTheme.muted,
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        '${item.value}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: ChartTheme.muted,
-                        ),
-                      ),
-                    ],
-                  );
-                },
+                    ),
+                  ),
+                ],
               ),
             );
           }),

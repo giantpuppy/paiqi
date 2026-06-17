@@ -24,84 +24,94 @@ class DonutChart extends StatelessWidget {
 
     final entries = data.entries.toList();
 
-    return Container(
-      padding: const EdgeInsets.all(ChartTheme.cardPadding),
-      decoration: BoxDecoration(
-        color: ChartTheme.background,
-        borderRadius: BorderRadius.circular(ChartTheme.cardRadius),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (title != null)
-            Text(
-              title!,
-              style: const TextStyle(
-                fontSize: ChartTheme.titleFontSize,
-                fontWeight: FontWeight.w600,
-                color: ChartTheme.label,
-              ),
-            ),
-          if (title != null) const SizedBox(height: 16),
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useCompact = constraints.maxWidth < 280;
+        final donutSize = useCompact ? 72.0 : 90.0;
+        final gap = useCompact ? 12.0 : 20.0;
+
+        return Container(
+          padding: const EdgeInsets.all(ChartTheme.cardPadding),
+          decoration: BoxDecoration(
+            color: ChartTheme.background,
+            borderRadius: BorderRadius.circular(ChartTheme.cardRadius),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: 100,
-                height: 100,
-                child: CustomPaint(
-                  painter: _DonutChartPainter(
-                    data: data,
-                    colors: colors,
+              if (title != null)
+                Text(
+                  title!,
+                  style: const TextStyle(
+                    fontSize: ChartTheme.titleFontSize,
+                    fontWeight: FontWeight.w600,
+                    color: ChartTheme.label,
                   ),
                 ),
-              ),
-              const SizedBox(width: 24),
-              Expanded(
-                child: Column(
-                  children: entries.map((entry) {
-                    final index = entries.indexOf(entry);
-                    final percent = (entry.value / total * 100)
-                        .toStringAsFixed(0);
-                    final color = colors[index % colors.length];
-
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            entry.key,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: ChartTheme.value,
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            '$percent% (${entry.value}场)',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: ChartTheme.muted,
-                            ),
-                          ),
-                        ],
+              if (title != null) const SizedBox(height: 16),
+              Flex(
+                direction: useCompact ? Axis.vertical : Axis.horizontal,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: donutSize,
+                    height: donutSize,
+                    child: CustomPaint(
+                      painter: _DonutChartPainter(
+                        data: data,
+                        colors: colors,
                       ),
-                    );
-                  }).toList(),
-                ),
+                    ),
+                  ),
+                  SizedBox(width: gap, height: gap),
+                  Expanded(
+                    child: Column(
+                      children: entries.map((entry) {
+                        final index = entries.indexOf(entry);
+                        final percent = (entry.value / total * 100)
+                            .toStringAsFixed(0);
+                        final color = colors[index % colors.length];
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                entry.key,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: ChartTheme.value,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '$percent% (${entry.value}场)',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: ChartTheme.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

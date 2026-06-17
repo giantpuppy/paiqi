@@ -18,6 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _regPassConfirmController = TextEditingController();
 
   bool _isLoading = false;
+  bool _rememberMe = true;
   int _tabIndex = 0;
   List<LocalUser> _users = [];
   String? _selectedUser;
@@ -30,7 +31,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _loadUsers() async {
     final users = await UserService.getAllUsers();
-    setState(() => _users = users);
+    final currentUser = await UserService.getCurrentUsername();
+    setState(() {
+      _users = users;
+      // 如果只有一个用户，或当前记住的用户存在，默认选中并展示密码框
+      if (users.length == 1) {
+        _selectedUser = users.first.username;
+      } else if (currentUser != null &&
+          users.any((u) => u.username == currentUser)) {
+        _selectedUser = currentUser;
+      }
+    });
   }
 
   Future<void> _loginSelected() async {
@@ -51,6 +62,10 @@ class _LoginScreenState extends State<LoginScreen> {
     if (error != null) {
       _showMsg(error);
       return;
+    }
+
+    if (_rememberMe) {
+      await UserService.setAutoLoginUser(_selectedUser!);
     }
 
     await DatabaseHelper.switchUser(_selectedUser!);
@@ -86,6 +101,10 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    if (_rememberMe) {
+      await UserService.setAutoLoginUser(username);
+    }
+
     await DatabaseHelper.switchUser(username);
 
     if (mounted) {
@@ -104,6 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _skipLogin() async {
     // 以 default 用户直接进入，使用现有数据
     await DatabaseHelper.switchUser('default');
+    await UserService.setAutoLoginUser('default');
     if (mounted) {
       Navigator.pushReplacement(
         context,
@@ -134,86 +154,121 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(32),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/stardrop.png',
-                    width: 72,
-                    height: 72,
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    '排期助手',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    '选择用户以继续',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF8A8F98),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // 已有用户列表
-                  if (_users.isNotEmpty) ...[
-                    _buildUserList(),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0, -0.3),
+            radius: 0.8,
+            colors: [
+              Color(0xFF2D1B4E),
+              Color(0xFF121212),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildLogo(),
                     const SizedBox(height: 24),
+                    const Text(
+                      '排期助手',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '选择用户以继续',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF8A8F98),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    if (_users.isNotEmpty) ...[
+                      _buildUserList(),
+                      const SizedBox(height: 24),
+                    ],
+                    _buildTabSwitch(),
+                    const SizedBox(height: 24),
+                    if (_tabIndex == 0 && _selectedUser != null)
+                      _buildPasswordForm()
+                    else if (_tabIndex == 0 && _users.isEmpty)
+                      _buildDirectEntry()
+                    else if (_tabIndex == 1)
+                      _buildRegisterForm(),
                   ],
-
-                  // Tab 切换
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1F1F1F),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _TabButton(
-                            label: '登录',
-                            isActive: _tabIndex == 0,
-                            onTap: () => setState(() {
-                              _tabIndex = 0;
-                              _selectedUser = null;
-                              _loginPassController.clear();
-                            }),
-                          ),
-                        ),
-                        Expanded(
-                          child: _TabButton(
-                            label: '注册新用户',
-                            isActive: _tabIndex == 1,
-                            onTap: () => setState(() => _tabIndex = 1),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  if (_tabIndex == 0 && _selectedUser != null)
-                    _buildPasswordForm()
-                  else if (_tabIndex == 0 && _users.isEmpty)
-                    _buildDirectEntry()
-                  else if (_tabIndex == 1)
-                    _buildRegisterForm(),
-                ],
+                ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Container(
+      width: 96,
+      height: 96,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF6B5BCD).withValues(alpha: 0.35),
+            blurRadius: 32,
+            spreadRadius: 4,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Image.asset(
+          'assets/icon_source.png',
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabSwitch() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F1F1F),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _TabButton(
+              label: '登录',
+              isActive: _tabIndex == 0,
+              onTap: () => setState(() {
+                _tabIndex = 0;
+                _selectedUser = null;
+                _loginPassController.clear();
+              }),
+            ),
+          ),
+          Expanded(
+            child: _TabButton(
+              label: '注册新用户',
+              isActive: _tabIndex == 1,
+              onTap: () => setState(() => _tabIndex = 1),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -303,6 +358,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           onSubmitted: (_) => _loginSelected(),
         ),
+        _buildRememberMeRow(),
         const SizedBox(height: 24),
         SizedBox(
           width: double.infinity,
@@ -374,6 +430,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           onSubmitted: (_) => _register(),
         ),
+        _buildRememberMeRow(),
         const SizedBox(height: 24),
         SizedBox(
           width: double.infinity,
@@ -389,6 +446,34 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildRememberMeRow() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: Checkbox(
+              value: _rememberMe,
+              onChanged: (v) => setState(() => _rememberMe = v ?? true),
+              activeColor: const Color(0xFF6B5BCD),
+              side: const BorderSide(color: Color(0xFF6B5BCD)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => setState(() => _rememberMe = !_rememberMe),
+            child: const Text(
+              '下次自动登录',
+              style: TextStyle(fontSize: 13, color: Color(0xFF8A8F98)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

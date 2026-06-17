@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../utils/status_colors.dart';
-import '../status_badge.dart';
 import '../warm_spotlight.dart';
 
 /// 月历中有演出场次的日期单元格。
@@ -35,7 +34,6 @@ class CalendarPosterCell extends StatelessWidget {
     final primaryColor = Theme.of(context).colorScheme.primary;
 
     final topEvent = events[rotationIndex % events.length];
-    final topStatus = topEvent['status'] as String? ?? 'unmarked';
 
     Widget content = ClipRRect(
       borderRadius: BorderRadius.circular(_outerRadius),
@@ -111,26 +109,6 @@ class CalendarPosterCell extends StatelessWidget {
                           top: 0,
                           left: 0,
                           child: _buildTodayBadge(),
-                        ),
-
-                      // 状态胶囊（选中态或周视图显示）
-                      if (showStatusBadge && topStatus != 'unmarked')
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: StatusBadge(
-                              label: _statusLabel(topStatus),
-                              color: statusColor,
-                              fontSize: 8,
-                              borderRadius: 6,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 1,
-                              ),
-                            ),
-                          ),
                         ),
                     ],
                   ),
@@ -239,15 +217,6 @@ class CalendarPosterCell extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _statusLabel(String status) {
-    return switch (status) {
-      'want_to_see' => '想看',
-      'bought' => '已买',
-      'watched' => '已观演',
-      _ => '未标记',
-    };
   }
 
   Widget _buildPosterStack(

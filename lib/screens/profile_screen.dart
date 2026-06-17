@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/show.dart';
 import '../models/performance.dart';
+import '../models/ticket.dart';
 import '../utils/page_transitions.dart';
-import '../models/actor.dart';
 import '../models/cast_member.dart';
 import '../models/profile_stats.dart';
 import '../services/user_service.dart';
@@ -11,7 +11,10 @@ import '../widgets/charts/chart_theme.dart';
 import '../widgets/charts/simple_bar_chart.dart';
 import '../widgets/charts/horizontal_bar_chart.dart';
 import '../widgets/charts/donut_chart.dart';
-import 'add_show_screen.dart';
+import '../widgets/warm_spotlight.dart';
+import '../widgets/glow_card.dart';
+import '../widgets/poster_fallback.dart';
+import '../widgets/breathing_icon.dart';
 import 'calendar_screen.dart';
 import 'settings_page.dart';
 
@@ -25,7 +28,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   List<Show> _shows = [];
   List<Performance> _performances = [];
-  List<Actor> _actors = [];
+  List<Ticket> _tickets = [];
   List<CastMember> _castMembers = [];
   bool _isLoading = true;
   String? _currentUser;
@@ -34,6 +37,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   TimeSlice _currentSlice = TimeSlice.all;
   ProfileStats _stats = _emptyStats(TimeSlice.all);
   bool _isActorDonut = false;
+  int _showListTabIndex = 0;
 
   static ProfileStats _emptyStats(TimeSlice slice) {
     return ProfileStats(
@@ -50,19 +54,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       actorRanking: const [],
       theaterDistribution: const [],
       timeSlotDistribution: const {'下午场': 0, '傍晚场': 0, '晚场': 0},
+      wantToSeePerformances: const [],
     );
-  }
-
-  int get _upcomingCount {
-    final now = DateTime.now();
-    final sevenDaysLater = now.add(const Duration(days: 7));
-    return _performances.where((p) {
-      if (p.status != 'bought') return false;
-      final date = DateTime.tryParse(p.date);
-      return date != null &&
-          date.isAfter(now) &&
-          date.isBefore(sevenDaysLater);
-    }).length;
   }
 
   String _formatCurrency(double value) {
@@ -77,13 +70,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     return buffer.toString();
   }
-
-  static const TextStyle _monoLabel = TextStyle(
-    fontSize: 10,
-    fontFamily: 'monospace',
-    color: ChartTheme.muted,
-    letterSpacing: 0.5,
-  );
 
   @override
   void initState() {
@@ -110,14 +96,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final db = DatabaseHelper.instance;
     final shows = await db.getAllShows();
     final performances = await db.getAllPerformances();
-    final actors = await db.getAllActors();
+    final tickets = await db.getAllTickets();
     final castMembers = await db.getAllCastMembers();
     final currentUser = await UserService.getCurrentUsername();
 
     setState(() {
       _shows = shows;
       _performances = performances;
-      _actors = actors;
+      _tickets = tickets;
       _castMembers = castMembers;
       _currentUser = currentUser;
       _stats = ProfileStats.fromData(
@@ -125,6 +111,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         performances: performances,
         shows: shows,
         castMembers: castMembers,
+        tickets: tickets,
       );
       _isLoading = false;
     });
@@ -137,6 +124,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         performances: _performances,
         shows: _shows,
         castMembers: _castMembers,
+        tickets: _tickets,
       );
     });
   }
@@ -153,73 +141,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _deleteShow(int showId) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: const Text('删除剧目将同时删除其所有场次记录，确定吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              '删除',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      final db = DatabaseHelper.instance;
-      final perfs = await db.getPerformancesByShowId(showId);
-      for (final p in perfs) {
-        await db.deleteCastMembersByPerformanceId(p.id!);
-        await db.deletePerformance(p.id!);
-      }
-      await db.deleteShow(showId);
-      _loadData();
-    }
-  }
-
-  Future<void> _deleteActor(int actorId) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: const Text('确定从演员列表中删除吗？不会影响已有场次记录。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              '删除',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await DatabaseHelper.instance.deleteActor(actorId);
-      _loadData();
-    }
-  }
-
   void _openSettings() {
     Navigator.push(
       context,
       SlideFadeRoute(page: const SettingsPage()),
     );
+  }
+
+  Future<void> _removeFromWantToSee(Performance performance) async {
+    final updated = performance.copyWith(status: 'unmarked');
+    await DatabaseHelper.instance.updatePerformance(updated);
+    await _loadData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已从想看清单移除')),
+      );
+    }
+  }
+
+  Show? _showForPerformance(Performance performance) {
+    try {
+      return _shows.firstWhere((s) => s.id == performance.showId);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -231,8 +176,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               slivers: [
                 SliverToBoxAdapter(child: _buildHeader()),
                 SliverToBoxAdapter(child: _buildHeroMetrics()),
-                SliverToBoxAdapter(child: _buildChartsSection()),
-                SliverToBoxAdapter(child: _buildManagementSection()),
+                SliverToBoxAdapter(child: _buildTimeSliceController()),
+                SliverToBoxAdapter(child: _buildMonthlyChart()),
+                SliverToBoxAdapter(child: _buildChartGrid()),
+                SliverToBoxAdapter(child: _buildShowLists()),
+                SliverToBoxAdapter(child: _buildFavoritePlaceholder()),
                 const SliverToBoxAdapter(child: SizedBox(height: 32)),
               ],
             ),
@@ -244,241 +192,254 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final statusBarHeight = MediaQuery.of(context).padding.top;
     return Padding(
       padding: EdgeInsets.fromLTRB(24, statusBarHeight + 16, 24, 0),
-      child: Row(
-        children: [
-          _buildTimeSliceFilterButton(),
-          const Spacer(),
-          GestureDetector(
-            onTap: _openSettings,
-            child: Row(
-              children: [
-                Text(
-                  displayName,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: ChartTheme.muted,
+      child: WarmSpotlight(
+        color: Theme.of(context).colorScheme.primary,
+        minAlpha: 0.04,
+        maxAlpha: 0.10,
+        minBlur: 12,
+        maxBlur: 24,
+        borderRadius: 20,
+        shouldAnimate: true,
+        child: GlowCard(
+          onTap: _openSettings,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          borderRadius: 20,
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor:
+                    Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                child: Text(
+                  displayName.substring(0, 1).toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
-                const SizedBox(width: 10),
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor:
-                      Theme.of(context).colorScheme.primary.withValues(alpha:0.2),
-                  child: Text(
-                    displayName.substring(0, 1).toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTimeSliceFilterButton() {
-    return IconButton(
-      icon: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: ChartTheme.background,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: ChartTheme.grid),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _currentSlice.label,
-              style: const TextStyle(
-                fontSize: 13,
-                color: ChartTheme.label,
-                fontWeight: FontWeight.w500,
               ),
-            ),
-            const SizedBox(width: 4),
-            const Icon(Icons.keyboard_arrow_down, size: 16, color: ChartTheme.muted),
-          ],
-        ),
-      ),
-      onPressed: _isLoading ? null : _showTimeSliceMenu,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-    );
-  }
-
-  void _showTimeSliceMenu() async {
-    final RenderBox button = context.findRenderObject() as RenderBox;
-    final RenderBox overlay =
-        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(
-        button.localToGlobal(button.size.topLeft(Offset.zero),
-            ancestor: overlay),
-        button.localToGlobal(button.size.bottomLeft(Offset.zero),
-            ancestor: overlay),
-      ),
-      Offset.zero & overlay.size,
-    );
-
-    final result = await showMenu<TimeSlice>(
-      context: context,
-      position: position,
-      color: const Color(0xFF1E1E1E),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      items: TimeSlice.values.map((slice) => _buildTimeSliceMenuItem(slice)).toList(),
-    );
-
-    if (result != null && result != _currentSlice) {
-      setState(() => _currentSlice = result);
-      _recomputeStats();
-    }
-  }
-
-  PopupMenuItem<TimeSlice> _buildTimeSliceMenuItem(TimeSlice slice) {
-    final isSelected = _currentSlice == slice;
-    return PopupMenuItem(
-      value: slice,
-      child: Row(
-        children: [
-          Text(
-            slice.label,
-            style: TextStyle(
-              fontSize: 14,
-              color: isSelected ? Colors.white : ChartTheme.label,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-            ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '我的剧场档案',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.settings_outlined,
+                color: Colors.white.withValues(alpha: 0.5),
+                size: 22,
+              ),
+            ],
           ),
-          if (isSelected) ...[
-            const Spacer(),
-            const Icon(Icons.check, size: 16, color: Colors.white),
-          ],
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildHeroMetrics() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _MetricCard(
-                  label: '已观演',
-                  value: '${_stats.watchedSessions}',
-                  onTap: () => _navigateToCalendar(CalendarFilter.watched),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  label: '已购买',
-                  value: '${_stats.upcomingSessions}',
-                  onTap: () => _navigateToCalendar(CalendarFilter.bought),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  label: '观演时长',
-                  value: '${_stats.totalDurationHours.toStringAsFixed(1)}h',
-                ),
-              ),
-            ],
+          Expanded(
+            child: _MetricCard(
+              label: '已观演',
+              value: '${_stats.watchedSessions}',
+              onTap: () => _navigateToCalendar(CalendarFilter.watched),
+            ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricCard(
-                  label: '花费',
-                  value: '¥${_formatCurrency(_stats.totalPaid)}',
-                  subtitle: '票面 ¥${_formatCurrency(_stats.faceValue)}',
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  label: '关注剧目场次',
-                  value: '${_stats.showsTracked}',
-                  onTap: () => _navigateToCalendar(CalendarFilter.bought),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  label: '已买场次',
-                  value: '$_upcomingCount',
-                  accentColor: _upcomingCount > 0
-                      ? ChartTheme.primary
-                      : null,
-                  onTap: () => _navigateToCalendar(CalendarFilter.bought),
-                ),
-              ),
-            ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: _MetricCard(
+              label: '已购买',
+              value: '${_stats.upcomingSessions}',
+              onTap: () => _navigateToCalendar(CalendarFilter.bought),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _MetricCard(
+              label: '观演花费',
+              value: '¥${_formatCurrency(_stats.totalPaid)}',
+              subtitle: '省 ¥${_formatCurrency(_stats.savedValue)}',
+              onTap: _showMoreMetricsSheet,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildChartsSection() {
+  void _showMoreMetricsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '更多数据',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+              _buildMoreMetricRow('总场次', '${_stats.totalSessions}'),
+              _buildMoreMetricRow('观演时长', '${_stats.totalDurationHours.toStringAsFixed(1)}h'),
+              _buildMoreMetricRow('票面总价', '¥${_formatCurrency(_stats.faceValue)}'),
+              _buildMoreMetricRow('关注剧目', '${_stats.showsTracked}'),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMoreMetricRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
         children: [
-          _stats.totalSessions == 0
-              ? _buildEmptyChartPlaceholder(title: '月度观演节奏')
-              : SimpleBarChart(
-                  data: List.generate(
-                    12,
-                    (index) => ChartData(
-                      label: '${index + 1}月',
-                      value: _stats.monthlySessions[index],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.6),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeSliceController() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: ChartTheme.background,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: TimeSlice.values.map((slice) {
+                  final isSelected = _currentSlice == slice;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() => _currentSlice = slice);
+                        _recomputeStats();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          slice.label,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            color: isSelected
+                                ? Theme.of(context).colorScheme.primary
+                                : ChartTheme.label,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                  title: '月度观演节奏',
-                  activeColor: ChartTheme.primary,
-                  highlightIndex: DateTime.now().month - 1,
-                  onBarTap: (index) => _navigateToCalendar(
-                    CalendarFilter.bought,
-                    focusedDay: DateTime(DateTime.now().year, index + 1, 1),
-                  ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthlyChart() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+      child: _stats.totalSessions == 0
+          ? _buildEmptyChartPlaceholder(title: '月度观演节奏')
+          : SimpleBarChart(
+              data: List.generate(
+                12,
+                (index) => ChartData(
+                  label: '${index + 1}月',
+                  value: _stats.monthlySessions[index],
                 ),
-          const SizedBox(height: 16),
-          _buildActorChart(),
-          const SizedBox(height: 16),
-          _stats.theaterDistribution.isEmpty
-              ? _buildEmptyChartPlaceholder(title: '剧场分布')
-              : HorizontalBarChart(
-                  data: _stats.theaterDistribution
-                      .map((e) => ChartData(label: e.key, value: e.value))
-                      .toList(),
-                  title: '剧场分布',
-                  accentColor: ChartTheme.bought,
-                  displayCount: 5,
-                ),
-          const SizedBox(height: 16),
-          _stats.totalSessions == 0
-              ? _buildEmptyChartPlaceholder(title: '时段偏好')
-              : DonutChart(
-                  data: _stats.timeSlotDistribution,
-                  title: '时段偏好',
-                  colors: const [
-                    ChartTheme.watched,
-                    ChartTheme.primary,
-                    ChartTheme.bought,
-                  ],
-                ),
+              ),
+              title: '月度观演节奏',
+              activeColor: ChartTheme.primary,
+              highlightIndex: DateTime.now().month - 1,
+              onBarTap: (index) => _navigateToCalendar(
+                CalendarFilter.bought,
+                focusedDay: DateTime(DateTime.now().year, index + 1, 1),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildChartGrid() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _buildActorChart()),
+              const SizedBox(width: 12),
+              Expanded(child: _buildTheaterChart()),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildTimeSlotChart(),
         ],
       ),
     );
@@ -486,26 +447,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildActorChart() {
     if (_stats.actorRanking.isEmpty) {
-      return _buildEmptyChartPlaceholder(title: '演员出场排名');
+      return _buildEmptyChartPlaceholder(title: '演员排名', compact: true);
     }
 
     final actorData = _stats.actorRanking
         .map((e) => ChartData(label: e.key, value: e.value))
         .toList();
 
-    return Container(
-      padding: const EdgeInsets.all(ChartTheme.cardPadding),
-      decoration: BoxDecoration(
-        color: ChartTheme.background,
-        borderRadius: BorderRadius.circular(ChartTheme.cardRadius),
-      ),
+    return GlowCard(
+      padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               const Text(
-                '演员出场排名',
+                '演员排名',
                 style: TextStyle(
                   fontSize: ChartTheme.titleFontSize,
                   fontWeight: FontWeight.w600,
@@ -530,7 +487,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           if (_isActorDonut)
             _buildActorDonutChart(actorData)
           else
@@ -569,13 +526,382 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildEmptyChartPlaceholder({required String title}) {
-    return Container(
-      padding: const EdgeInsets.all(ChartTheme.cardPadding),
-      decoration: BoxDecoration(
-        color: ChartTheme.background,
-        borderRadius: BorderRadius.circular(ChartTheme.cardRadius),
+  Widget _buildTheaterChart() {
+    return GlowCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '剧场分布',
+            style: TextStyle(
+              fontSize: ChartTheme.titleFontSize,
+              fontWeight: FontWeight.w600,
+              color: ChartTheme.label,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _stats.theaterDistribution.isEmpty
+              ? _buildCompactEmptyPlaceholder()
+              : HorizontalBarChart(
+                  data: _stats.theaterDistribution
+                      .map((e) => ChartData(label: e.key, value: e.value))
+                  .toList(),
+                  accentColor: ChartTheme.bought,
+                  displayCount: 5,
+                ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildTimeSlotChart() {
+    return GlowCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '时段偏好',
+            style: TextStyle(
+              fontSize: ChartTheme.titleFontSize,
+              fontWeight: FontWeight.w600,
+              color: ChartTheme.label,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _stats.totalSessions == 0
+              ? _buildCompactEmptyPlaceholder()
+              : DonutChart(
+                  data: _stats.timeSlotDistribution,
+                  colors: const [
+                    ChartTheme.watched,
+                    ChartTheme.primary,
+                    ChartTheme.bought,
+                  ],
+                ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShowLists() {
+    final now = DateTime.now();
+    final sevenDaysLater = now.add(const Duration(days: 7));
+    final upcomingPerformances = _performances.where((p) {
+      if (p.status != 'bought') return false;
+      final date = DateTime.tryParse(p.date);
+      return date != null &&
+          date.isAfter(now) &&
+          date.isBefore(sevenDaysLater);
+    }).toList();
+
+    final wantToSee = _stats.wantToSeePerformances;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+      child: GlowCard(
+        padding: const EdgeInsets.all(ChartTheme.cardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _buildShowListTab('即将观演', 0, upcomingPerformances.length),
+                const SizedBox(width: 16),
+                _buildShowListTab('想看清单', 1, wantToSee.length),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: _showListTabIndex == 0
+                  ? _buildPerformanceList(
+                      key: const ValueKey('upcoming'),
+                      performances: upcomingPerformances,
+                      emptyIcon: Icons.confirmation_number_outlined,
+                      emptyText: '未来 7 天内没有即将观演的场次',
+                    )
+                  : _buildWantToSeeList(
+                      key: const ValueKey('want_to_see'),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShowListTab(String label, int index, int count) {
+    final isSelected = _showListTabIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _showListTabIndex = index),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected ? Colors.white : ChartTheme.label,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+                      : ChartTheme.grid.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : ChartTheme.muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: 24,
+            height: 3,
+            decoration: BoxDecoration(
+              color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerformanceList({
+    required Key key,
+    required List<Performance> performances,
+    required IconData emptyIcon,
+    required String emptyText,
+  }) {
+    if (performances.isEmpty) {
+      return _buildEmptyListPlaceholder(icon: emptyIcon, text: emptyText);
+    }
+
+    return Column(
+      key: key,
+      children: performances.asMap().entries.map((entry) {
+        final index = entry.key;
+        final performance = entry.value;
+        final show = _showForPerformance(performance);
+        return _buildPerformanceRow(
+          performance: performance,
+          show: show,
+          showDivider: index > 0,
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildWantToSeeList({required Key key}) {
+    final performances = _stats.wantToSeePerformances;
+    if (performances.isEmpty) {
+      return _buildEmptyListPlaceholder(
+        icon: Icons.star_border,
+        text: '暂无想看的剧目',
+      );
+    }
+
+    return Column(
+      key: key,
+      children: performances.asMap().entries.map((entry) {
+        final index = entry.key;
+        final performance = entry.value;
+        final show = _showForPerformance(performance);
+        return Dismissible(
+          key: ValueKey('want_${performance.id}'),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF54A45).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.delete_outline, color: Color(0xFFF54A45)),
+          ),
+          onDismissed: (_) => _removeFromWantToSee(performance),
+          child: _buildPerformanceRow(
+            performance: performance,
+            show: show,
+            showDivider: index > 0,
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildPerformanceRow({
+    required Performance performance,
+    required Show? show,
+    required bool showDivider,
+  }) {
+    final date = DateTime.tryParse(performance.date);
+    final dateText = date != null ? '${date.month}/${date.day}' : performance.date;
+    final timeText = performance.time?.isNotEmpty == true ? performance.time! : '';
+
+    return Container(
+      decoration: BoxDecoration(
+        border: showDivider
+            ? Border(
+                top: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  width: 0.5,
+                ),
+              )
+            : null,
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 52,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              color: ChartTheme.grid,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: show != null
+                ? PosterFallback(showId: show.id ?? 0, showName: show.name, fontSize: 18)
+                : const SizedBox.shrink(),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  show?.name ?? '未知剧目',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${show?.theater ?? ''}  $dateText $timeText'.trim(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.45),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyListPlaceholder({required IconData icon, required String text}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Center(
+        child: Column(
+          children: [
+            BreathingIcon(icon: icon, size: 40, color: ChartTheme.muted.withValues(alpha: 0.4)),
+            const SizedBox(height: 12),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                color: ChartTheme.muted.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFavoritePlaceholder() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+      child: GlowCard(
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('收藏功能即将上线')),
+          );
+        },
+        padding: const EdgeInsets.all(ChartTheme.cardPadding),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 64,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: ChartTheme.grid,
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.favorite_border,
+                  color: Colors.white.withValues(alpha: 0.2),
+                  size: 24,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '我的收藏',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '收藏的剧目、演员和剧场将集中在这里',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: Colors.white.withValues(alpha: 0.3),
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyChartPlaceholder({required String title, bool compact = false}) {
+    return GlowCard(
+      padding: const EdgeInsets.all(ChartTheme.cardPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -587,21 +913,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
               color: ChartTheme.label,
             ),
           ),
-          const SizedBox(height: 28),
+          SizedBox(height: compact ? 16 : 28),
           Center(
             child: Column(
               children: [
                 Icon(
                   Icons.bar_chart,
-                  color: ChartTheme.muted.withValues(alpha:0.4),
-                  size: 32,
+                  color: ChartTheme.muted.withValues(alpha: 0.4),
+                  size: compact ? 24 : 32,
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   '暂无数据',
                   style: TextStyle(
                     fontSize: 12,
-                    color: ChartTheme.muted,
+                    color: ChartTheme.muted.withValues(alpha: 0.7),
                   ),
                 ),
               ],
@@ -612,237 +938,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildManagementSection() {
+  Widget _buildCompactEmptyPlaceholder() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('管理', style: _monoLabel),
-          const SizedBox(height: 12),
-          _buildAssetTile(
-            icon: Icons.theaters,
-            label: '我的剧目',
-            count: _shows.length,
-            onTap: () => _showShowsSheet(),
-          ),
-          _buildAssetTile(
-            icon: Icons.people,
-            label: '演员名单',
-            count: _actors.length,
-            onTap: () => _showActorsSheet(),
-          ),
-          _buildAssetTile(
-            icon: Icons.settings,
-            label: '设置',
-            subtitle: '账户、OCR、备份',
-            onTap: _openSettings,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssetTile({
-    required IconData icon,
-    required String label,
-    int? count,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
-      leading: Icon(
-        icon,
-        size: 20,
-        color: Theme.of(context).colorScheme.primary.withValues(alpha:0.8),
-      ),
-      title: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              style: const TextStyle(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(
+              Icons.bar_chart,
+              color: ChartTheme.muted.withValues(alpha: 0.4),
+              size: 24,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '暂无数据',
+              style: TextStyle(
                 fontSize: 12,
-                color: ChartTheme.muted,
-              ),
-            )
-          : Text(
-              '$count 项',
-              style: const TextStyle(
-                fontSize: 12,
-                color: ChartTheme.muted,
+                color: ChartTheme.muted.withValues(alpha: 0.7),
               ),
             ),
-      trailing: const Icon(
-        Icons.chevron_right,
-        size: 18,
-        color: ChartTheme.muted,
-      ),
-      onTap: onTap,
-    );
-  }
-
-  void _showShowsSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Text(
-                      '我的剧目',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.add),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          SlideFadeRoute(
-                            page: const AddShowScreen(),
-                          ),
-                        ).then((_) => _loadData());
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _shows.isEmpty
-                    ? const Center(
-                        child: Text(
-                          '暂无剧目',
-                          style: TextStyle(color: ChartTheme.muted),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: _shows.length,
-                        itemBuilder: (context, index) {
-                          final show = _shows[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primaryContainer,
-                              child: Text(
-                                show.name.substring(0, 1),
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onPrimaryContainer,
-                                ),
-                              ),
-                            ),
-                            title: Text(show.name),
-                            subtitle: show.theater != null
-                                ? Text(show.theater!)
-                                : null,
-                            trailing: IconButton(
-                              icon: Icon(Icons.delete_outline,
-                                  color: Colors.red[300]),
-                              onPressed: () => _deleteShow(show.id!),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  void _showActorsSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  '演员名单',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: _actors.isEmpty
-                    ? const Center(
-                        child: Text(
-                          '暂无演员',
-                          style: TextStyle(color: ChartTheme.muted),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: _actors.length,
-                        itemBuilder: (context, index) {
-                          final actor = _actors[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.orange[100],
-                              child: Text(
-                                actor.name.substring(0, 1),
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange[800],
-                                ),
-                              ),
-                            ),
-                            title: Text(actor.name),
-                            subtitle: actor.note != null
-                                ? Text(actor.note!)
-                                : null,
-                            trailing: IconButton(
-                              icon: Icon(Icons.delete_outline,
-                                  color: Colors.red[300]),
-                              onPressed: () => _deleteActor(actor.id!),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
+          ],
+        ),
       ),
     );
   }
@@ -852,34 +968,21 @@ class _MetricCard extends StatelessWidget {
   final String label;
   final String value;
   final String? subtitle;
-  final Color? accentColor;
   final VoidCallback? onTap;
 
   const _MetricCard({
     required this.label,
     required this.value,
     this.subtitle,
-    this.accentColor,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final card = Container(
+    return GlowCard(
+      onTap: onTap,
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: ChartTheme.background,
-        borderRadius: BorderRadius.circular(ChartTheme.cardRadius),
-        boxShadow: accentColor != null
-            ? [
-                BoxShadow(
-                  color: accentColor!.withValues(alpha:0.12),
-                  blurRadius: 12,
-                  spreadRadius: 0,
-                ),
-              ]
-            : null,
-      ),
+      borderRadius: ChartTheme.cardRadius,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -924,14 +1027,6 @@ class _MetricCard extends StatelessWidget {
           ],
         ],
       ),
-    );
-
-    if (onTap == null) return card;
-
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: card,
     );
   }
 }

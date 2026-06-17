@@ -7,6 +7,7 @@ import '../models/actor.dart';
 import '../models/ocr_correction.dart';
 import '../models/show_template.dart';
 import '../models/ticket.dart';
+import '../models/todo_item.dart';
 
 class _WebDB {
   final String username;
@@ -57,6 +58,9 @@ class _WebDB {
             if (entry.key == 'shows' && !row.containsKey('cover_path')) {
               row['cover_path'] = null;
             }
+            if (entry.key == 'shows' && !row.containsKey('is_in_schedule_flow')) {
+              row['is_in_schedule_flow'] = 0;
+            }
             return row;
           }).toList();
           _tables[entry.key] = rows;
@@ -73,9 +77,11 @@ class _WebDB {
       _tables.putIfAbsent('ocr_corrections', () => []);
       _tables.putIfAbsent('show_templates', () => []);
       _tables.putIfAbsent('tickets', () => []);
+      _tables.putIfAbsent('todo_items', () => []);
       _autoIncrement.putIfAbsent('ocr_corrections', () => 0);
       _autoIncrement.putIfAbsent('show_templates', () => 0);
       _autoIncrement.putIfAbsent('tickets', () => 0);
+      _autoIncrement.putIfAbsent('todo_items', () => 0);
 
       // v9 迁移：将 performances 上的 seat/price 复制到 tickets
       if (!_tables.containsKey('_tickets_migrated')) {
@@ -101,6 +107,54 @@ class _WebDB {
         }
         _tables['tickets'] = tickets;
         _tables['_tickets_migrated'] = [{'done': true}];
+      }
+
+      // v11 迁移：
+      // 1) 再次迁移 performances 上残留的 seat/price（ v9 之后仍可能有旧数据写入）
+      // 2) 把已买且日期已过的场次改为 watched
+      if (!_tables.containsKey('_v11_migrated')) {
+        final perfs = _tables['performances'] ?? [];
+        final tickets = _tables['tickets'] ?? [];
+        final today = DateTime.now();
+        final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+        for (final p in perfs) {
+          // 迁移残留 seat/price
+          final hasSeat = p['seat'] != null && p['seat'].toString().isNotEmpty;
+          final hasPrice = p['price'] != null;
+          final hasActual = p['actual_price'] != null;
+          if (hasSeat || hasPrice || hasActual) {
+            final alreadyMigrated = tickets.any((t) => t['performance_id'] == p['id']);
+            if (!alreadyMigrated) {
+              _autoIncrement['tickets'] = (_autoIncrement['tickets'] ?? 0) + 1;
+              tickets.add({
+                'id': _autoIncrement['tickets'],
+                'performance_id': p['id'],
+                'seat': p['seat'],
+                'price': p['price'],
+                'actual_price': p['actual_price'],
+              });
+            }
+          }
+          // 持久化 watched 状态
+          if (p['status'] == 'bought' && (p['date'] as String? ?? '').compareTo(todayStr) < 0) {
+            p['status'] = 'watched';
+          }
+        }
+        _tables['tickets'] = tickets;
+        _tables['_v11_migrated'] = [{'done': true}];
+        await _save();
+      }
+
+      // v12 迁移：为 shows 增加 is_in_schedule_flow 字段，默认 0（管理台）
+      if (!_tables.containsKey('_v12_migrated')) {
+        final shows = _tables['shows'] ?? [];
+        for (final s in shows) {
+          if (!s.containsKey('is_in_schedule_flow')) {
+            s['is_in_schedule_flow'] = 0;
+          }
+        }
+        _tables['_v12_migrated'] = [{'done': true}];
+        await _save();
       }
       print('[WebDB] Data loaded successfully for $_storageKey');
     } catch (e, st) {
@@ -281,6 +335,7 @@ class _WebDB {
         'show_name': show['name'],
         'theater': show['theater'],
         'cover_path': show['cover_path'],
+        'is_in_schedule_flow': show['is_in_schedule_flow'] ?? 0,
       });
     }
     results.sort((a, b) {
@@ -402,6 +457,17 @@ class DatabaseHelper {
         FOREIGN KEY (performance_id) REFERENCES performances (id) ON DELETE CASCADE
       )
     ''');
+    await db.execute('''
+      CREATE TABLE todo_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        performance_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        is_done INTEGER DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT,
+        FOREIGN KEY (performance_id) REFERENCES performances (id) ON DELETE CASCADE
+      )
+    ''');
     await db._load();
     print('[WebDB] Init complete for user: $_username');
   }
@@ -512,6 +578,98 @@ class DatabaseHelper {
     return null;
   }
 
+  /// Web 端：手动组装演出+票根信息
+  Future<Map<String, dynamic>?> getPerformanceWithTicket(int id) async {
+    final db = await instance.database;
+    final perfMaps = await db.query('performances', where: 'id = ?', whereArgs: [id]);
+    if (perfMaps.isEmpty) return null;
+    final perf = Map<String, dynamic>.from(perfMaps.first);
+    final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [id]);
+    if (tickets.isNotEmpty) {
+      final t = tickets.first;
+      perf['ticket_id'] = t['id'];
+      perf['ticket_seat'] = t['seat'];
+      perf['ticket_price'] = t['price'];
+      perf['ticket_actual_price'] = t['actual_price'];
+    }
+    return perf;
+  }
+
+  Future<List<Map<String, dynamic>>> getPerformancesWithTicketsByShowId(int showId) async {
+    final db = await instance.database;
+    final perfs = await db.query(
+      'performances',
+      where: 'show_id = ?',
+      whereArgs: [showId],
+      orderBy: 'date ASC, time ASC',
+    );
+    final result = <Map<String, dynamic>>[];
+    for (final p in perfs) {
+      final perf = Map<String, dynamic>.from(p);
+      final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [perf['id']]);
+      if (tickets.isNotEmpty) {
+        final t = tickets.first;
+        perf['ticket_id'] = t['id'];
+        perf['ticket_seat'] = t['seat'];
+        perf['ticket_price'] = t['price'];
+        perf['ticket_actual_price'] = t['actual_price'];
+      }
+      result.add(perf);
+    }
+    return result;
+  }
+
+  Future<List<Map<String, dynamic>>> getPerformancesWithTicketsByDate(String date) async {
+    final db = await instance.database;
+    final perfs = await db.rawQuery('''
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
+      FROM performances p
+      JOIN shows s ON p.show_id = s.id
+      WHERE p.date = ?
+      ORDER BY p.time ASC
+    ''', [date]);
+    final result = <Map<String, dynamic>>[];
+    for (final p in perfs) {
+      final perf = Map<String, dynamic>.from(p);
+      final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [perf['id']]);
+      if (tickets.isNotEmpty) {
+        final t = tickets.first;
+        perf['ticket_id'] = t['id'];
+        perf['ticket_seat'] = t['seat'];
+        perf['ticket_price'] = t['price'];
+        perf['ticket_actual_price'] = t['actual_price'];
+      }
+      result.add(perf);
+    }
+    return result;
+  }
+
+  Future<List<Map<String, dynamic>>> getPerformancesWithTicketsByDateRange(
+      String startDate, String endDate) async {
+    final db = await instance.database;
+    final perfs = await db.rawQuery('''
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
+      FROM performances p
+      JOIN shows s ON p.show_id = s.id
+      WHERE p.date >= ? AND p.date <= ?
+      ORDER BY p.date ASC, p.time ASC
+    ''', [startDate, endDate]);
+    final result = <Map<String, dynamic>>[];
+    for (final p in perfs) {
+      final perf = Map<String, dynamic>.from(p);
+      final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [perf['id']]);
+      if (tickets.isNotEmpty) {
+        final t = tickets.first;
+        perf['ticket_id'] = t['id'];
+        perf['ticket_seat'] = t['seat'];
+        perf['ticket_price'] = t['price'];
+        perf['ticket_actual_price'] = t['actual_price'];
+      }
+      result.add(perf);
+    }
+    return result;
+  }
+
   Future<int> updatePerformance(Performance perf) async {
     final db = await instance.database;
     return db.update('performances', perf.toMap(), where: 'id = ?', whereArgs: [perf.id]);
@@ -596,6 +754,61 @@ class DatabaseHelper {
     return db.delete('tickets', where: 'performance_id = ?', whereArgs: [performanceId]);
   }
 
+  Future<List<Ticket>> getAllTickets() async {
+    final db = await instance.database;
+    final result = await db.query('tickets');
+    return result.map((json) => Ticket.fromMap(json)).toList();
+  }
+
+  Future<int> deleteAllTickets() async {
+    final db = await instance.database;
+    return db.delete('tickets');
+  }
+
+  // ========== Todo Items ==========
+  Future<TodoItem> createTodoItem(TodoItem item) async {
+    final db = await instance.database;
+    final id = await db.insert('todo_items', item.toMap());
+    return item.copyWith(id: id);
+  }
+
+  Future<List<TodoItem>> getTodoItemsByPerformanceId(int performanceId) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'todo_items',
+      where: 'performance_id = ?',
+      whereArgs: [performanceId],
+      orderBy: 'sort_order ASC, created_at ASC',
+    );
+    return result.map((json) => TodoItem.fromMap(json)).toList();
+  }
+
+  Future<int> updateTodoItem(TodoItem item) async {
+    final db = await instance.database;
+    return db.update('todo_items', item.toMap(), where: 'id = ?', whereArgs: [item.id]);
+  }
+
+  Future<int> deleteTodoItem(int id) async {
+    final db = await instance.database;
+    return db.delete('todo_items', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteTodoItemsByPerformanceId(int performanceId) async {
+    final db = await instance.database;
+    return db.delete('todo_items', where: 'performance_id = ?', whereArgs: [performanceId]);
+  }
+
+  Future<List<TodoItem>> getAllTodoItems() async {
+    final db = await instance.database;
+    final result = await db.query('todo_items');
+    return result.map((json) => TodoItem.fromMap(json)).toList();
+  }
+
+  Future<int> deleteAllTodoItems() async {
+    final db = await instance.database;
+    return db.delete('todo_items');
+  }
+
   Future<Actor> createActor(Actor actor) async {
     final db = await instance.database;
     final existing = await getActorByName(actor.name);
@@ -629,6 +842,16 @@ class DatabaseHelper {
 
   Future<void> replaceAllPerformances(int showId, List<Map<String, dynamic>> perfDataList) async {
     final db = await instance.database;
+    // 备份旧场次 ticket（按 date|time 匹配）
+    final oldPerfs = await db.query('performances', where: 'show_id = ?', whereArgs: [showId]);
+    final oldTickets = <String, Map<String, dynamic>>{};
+    for (final p in oldPerfs) {
+      final perfId = p['id'] as int;
+      final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [perfId]);
+      if (tickets.isNotEmpty) {
+        oldTickets['${p['date']}|${p['time']}'] = tickets.first;
+      }
+    }
     await db.delete('performances', where: 'show_id = ?', whereArgs: [showId]);
     for (final data in perfDataList) {
       final perf = data['performance'] as Performance;
@@ -640,6 +863,26 @@ class DatabaseHelper {
         final castMap = cast.copyWith(performanceId: perfId).toMap();
         castMap.remove('id');
         await db.insert('cast_members', castMap);
+      }
+      // 恢复旧 ticket
+      final oldTicket = oldTickets['${perf.date}|${perf.time}'];
+      if (oldTicket != null) {
+        await db.insert('tickets', {
+          'performance_id': perfId,
+          'seat': oldTicket['seat'],
+          'price': oldTicket['price'],
+          'actual_price': oldTicket['actual_price'],
+        });
+      }
+      // 写入新 ticket
+      final newTicket = data['ticket'] as Ticket?;
+      if (newTicket != null) {
+        await db.insert('tickets', {
+          'performance_id': perfId,
+          'seat': newTicket.seat,
+          'price': newTicket.price,
+          'actual_price': newTicket.actualPrice,
+        });
       }
     }
   }
@@ -657,6 +900,85 @@ class DatabaseHelper {
     return db.rawQuery(
       'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY p.date ASC, p.time ASC',
     );
+  }
+
+  /// 获取所有在排期流中的演出（含剧目信息）。
+  Future<List<Map<String, dynamic>>> getPerformancesInScheduleFlow() async {
+    final db = await instance.database;
+    final all = await db.rawQuery(
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY p.date ASC, p.time ASC',
+    );
+    return all.where((r) => (r['is_in_schedule_flow'] as int?) == 1).toList();
+  }
+
+  /// 查询某日期范围内、在排期流中的演出（含剧目信息）。
+  Future<List<Map<String, dynamic>>> getPerformancesInScheduleFlowByDateRange(
+      String startDate, String endDate) async {
+    final db = await instance.database;
+    final all = await db.rawQuery(
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY p.date ASC, p.time ASC',
+    );
+    return all.where((r) {
+      if ((r['is_in_schedule_flow'] as int?) != 1) return false;
+      final date = r['date']?.toString() ?? '';
+      return date.compareTo(startDate) >= 0 && date.compareTo(endDate) <= 0;
+    }).toList();
+  }
+
+  /// 查询某日期、在排期流中的演出，并 LEFT JOIN 其 ticket 信息。
+  Future<List<Map<String, dynamic>>> getPerformancesInScheduleFlowWithTicketsByDate(
+      String date) async {
+    final db = await instance.database;
+    final perfs = await db.rawQuery('''
+      SELECT p.*, s.name as show_name, s.theater, s.cover_path
+      FROM performances p
+      JOIN shows s ON p.show_id = s.id
+      WHERE p.date = ?
+      ORDER BY p.time ASC
+    ''', [date]);
+    final result = <Map<String, dynamic>>[];
+    for (final p in perfs) {
+      if ((p['is_in_schedule_flow'] as int?) != 1) continue;
+      final perf = Map<String, dynamic>.from(p);
+      final tickets = await db.query('tickets', where: 'performance_id = ?', whereArgs: [perf['id']]);
+      if (tickets.isNotEmpty) {
+        final t = tickets.first;
+        perf['ticket_id'] = t['id'];
+        perf['ticket_seat'] = t['seat'];
+        perf['ticket_price'] = t['price'];
+        perf['ticket_actual_price'] = t['actual_price'];
+      }
+      result.add(perf);
+    }
+    return result;
+  }
+
+  /// 查询某个月份、在排期流中的演出（含剧目信息）。
+  Future<List<Map<String, dynamic>>> getPerformancesInScheduleFlowByMonth(
+      int year, int month) async {
+    final db = await instance.database;
+    final monthStr = month.toString().padLeft(2, '0');
+    final prefix = '$year-$monthStr';
+    final all = await db.rawQuery(
+      'SELECT p.*, s.name as show_name, s.theater, s.cover_path FROM performances p JOIN shows s ON p.show_id = s.id ORDER BY s.name ASC, p.date ASC, p.time ASC',
+    );
+    return all.where((r) {
+      if ((r['is_in_schedule_flow'] as int?) != 1) return false;
+      final date = r['date']?.toString() ?? '';
+      return date.startsWith(prefix);
+    }).toList();
+  }
+
+  /// 查询所有在排期流中的剧目。
+  Future<List<Show>> getShowsInScheduleFlow() async {
+    final db = await instance.database;
+    final result = await db.query(
+      'shows',
+      where: 'is_in_schedule_flow = ?',
+      whereArgs: [1],
+      orderBy: 'created_at DESC',
+    );
+    return result.map((json) => Show.fromMap(json)).toList();
   }
 
   Future<Map<String, dynamic>?> getPerformanceDetail(int performanceId) async {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -68,6 +69,29 @@ class CoverHelper {
       }
     } catch (_) {
       // 静默失败，不影响主流程
+    }
+  }
+
+  /// 读取海报文件并返回 base64 字符串
+  static Future<String?> readAsBase64(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final bytes = await file.readAsBytes();
+      return base64Encode(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 从 base64 数据恢复海报图片
+  static Future<String?> saveCoverFromBase64(String showName, String base64) async {
+    try {
+      final bytes = base64Decode(base64);
+      return saveCoverImage(showName, bytes);
+    } catch (_) {
+      return null;
     }
   }
 }

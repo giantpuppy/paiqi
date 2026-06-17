@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:lunar/lunar.dart';
 import '../../utils/status_colors.dart';
 import '../warm_spotlight.dart';
 import 'calendar_poster_cell.dart';
@@ -52,10 +51,6 @@ class CalendarCell extends StatelessWidget {
 
   Widget _buildNoEventCell(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
-    final lunar = Lunar.fromDate(day);
-    final lunarDay = lunar.getDayInChinese();
-    final lunarText =
-        lunarDay == '初一' ? '${lunar.getMonthInChinese()}月' : lunarDay;
     final textColor = day.weekday >= 6
         ? const Color(0xFFB3B3B3)
         : Colors.white;
@@ -88,35 +83,17 @@ class CalendarCell extends StatelessWidget {
       child: FittedBox(
         fit: BoxFit.scaleDown,
         alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              '${day.day}',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: isToday || isSelected
-                    ? FontWeight.bold
-                    : FontWeight.normal,
-                color: isSelected
-                    ? Colors.white
-                    : (isToday ? kBrandPurple : textColor),
-              ),
-            ),
-            Text(
-              lunarText,
-              style: TextStyle(
-                fontSize: 10,
-                color: isSelected
-                    ? Colors.white.withValues(alpha: 0.8)
-                    : (isToday
-                        ? kBrandPurple.withValues(alpha: 0.7)
-                        : const Color(0xFF8A8F98)),
-              ),
-            ),
-          ],
+        child: Text(
+          '${day.day}',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: isToday || isSelected
+                ? FontWeight.bold
+                : FontWeight.normal,
+            color: isSelected
+                ? Colors.white
+                : (isToday ? kBrandPurple : textColor),
+          ),
         ),
       ),
     );

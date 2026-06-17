@@ -3,7 +3,7 @@
 > **版本**: v1.0  
 > **日期**: 2026/06/01  
 > **状态**: 开发中（MVP 已完成，UI 优化进行中）  
-> **上次更新**: 2026/06/17 — 排期页交互最终调整：左上角月份标题移除管理台入口；右上角保持管理台入口；底部「排期」tab 使用自定义 3横线/7横线图标，模式切换由该 tab 承担
+> **上次更新**: 2026/06/18 — 个人中心界面排布重构：Header 身份区强化设置入口、Hero 指标卡改为首屏一行三列、时间切片下移至指标卡下方、图表区分首屏主图与二屏网格、新增即将观演/想看清单列表与收藏占位
 
 ---
 
@@ -11,6 +11,26 @@
 
 | 日期 | 改动内容 | 关联文件/模块 |
 |------|---------|-------------|
+| 2026/06/18 | 个人中心界面排布重构：Header 改为身份区（头像+用户名+设置入口），使用 `WarmSpotlight` 追光背景；Hero 指标卡从 2×3 改为首屏一行三列（已观演/已购买/观演花费），其余指标收入"更多数据"底部弹窗；时间切片从 Header 下移为独立分段控制器，右侧新增"本月"快捷入口；图表区分首屏主图（月度观演节奏）与二屏 2 列网格（演员排名/剧场分布/时段偏好）；新增"即将观演"与"想看清单"列表，想看清单支持左滑删除；新增"我的收藏"占位入口 | `profile_screen.dart`, `profile_stats.dart` |
+| 2026/06/18 | 统一添加与管理剧目流程：新建剧目保存后直接进入 `ShowManagementScreen`，使用同一界面继续管理场次和排期流状态 | `add_show_screen.dart`, `show_management_screen.dart` |
+| 2026/06/18 | 剧目管理页排期流操作优化：将「加入/移出排期流」从头部小开关改为页面核心大卡片，保留完整场次信息的同时提升信噪比 | `show_management_screen.dart` |
+| 2026/06/18 | 月历调整：恢复「全部」筛选下展示 `unmarked` 场次；移除月历单元格上的状态文字胶囊（已买/想看/已观演），仅保留状态色时间显示 | `calendar_screen.dart`, `calendar_poster_cell.dart` |
+| 2026/06/18 | 排期数据漏斗重构：给 `Show` 增加 `isInScheduleFlow` 字段，数据库升级到 v12；新建/导入剧目默认进入管理台（`false`），排期流（`GanttScreen`）只查询已加入剧目的场次，月历/年历排除 `unmarked` 并只展示排期流中「想看/已买/已看」的场次；管理台海报卡片增加排期流状态徽标、长按导入/移出 Bottom Sheet；剧目管理页增加排期流状态开关；备份恢复保留该字段；设置页新增「重置所有剧目到管理台」入口；修复管理台左右滑动时年月标题不同步的问题 | `show.dart`, `database_helper_io.dart`, `database_helper_web.dart`, `monthly_workbench_screen.dart`, `show_management_screen.dart`, `gantt_screen.dart`, `calendar_screen.dart`, `year_calendar_screen.dart`, `schedule_import_service.dart`, `add_show_screen.dart`, `import_schedule_screen.dart`, `data_backup.dart`, `settings_page.dart` |
+| 2026/06/18 | 排期页工作台月份选择交互闭环：嵌入 `MonthlyWorkbenchScreen` 左右滑动切换月份时通过 `onMonthChanged` 回调同步更新 `GanttScreen` 左上角年月标题；点击左上角年月弹出双滚轮（年/月）底部弹窗选择器，替代系统 `showDatePicker` | `gantt_screen.dart`, `monthly_workbench_screen.dart` |
+| 2026/06/18 | 补充卡司排期汇总表数据并支持自动导入：新增 `ScheduleImportService`，启动时按当前用户名检测并自动写入数据库；保留设置页手动入口与 `ImportScheduleScreen`；解析脚本生成 `lib/data/schedule_import_bundle.dart` | `tools/parse_schedule_import.py`, `lib/services/schedule_import_service.dart`, `lib/data/schedule_import_bundle.dart`, `lib/screens/import_schedule_screen.dart`, `lib/screens/settings_page.dart`, `lib/main.dart` |
+| 2026/06/18 | 设置页收纳管理入口：「我的剧目」「月度管理」「演员名单」从个人中心迁移至设置页；保留新增剧目、跳转剧目管理、删除剧目及删除演员能力；个人中心移除「管理」区块及「设置」tile，设置仅通过顶部头像/用户名区域进入 | `settings_page.dart`, `profile_screen.dart` |
+| 2026/06/18 | 排期页嵌入工作台移除独立月份选择器：`MonthlyWorkbenchScreen.embedded` 模式下不再显示 `_buildMonthSelector`，复用排期页左上角年月选择，避免重复控件 | `monthly_workbench_screen.dart` |
+| 2026/06/17 | Phase 2 核心流程补全：新建 `BoughtFormSheet` 底部表单，统一详情页、排期板、管理台「标记已买」的录入体验；跳过则只改状态，保存则写入 `tickets`；移除 Gantt 中写入 performances 旧字段的废弃表单 | `bought_form_sheet.dart`, `gantt_screen.dart`, `unified_show_detail_screen.dart`, `show_management_screen.dart` |
+| 2026/06/17 | 设置页返回按钮：SettingsPage AppBar 增加返回箭头 | `settings_page.dart` |
+| 2026/06/17 | 管理台入口优化：排期板右上角管理按钮从纯图标改为「管理台」文字按钮；ProfileScreen 管理区新增「月度管理」入口，直接打开当月海报墙 | `gantt_screen.dart`, `profile_screen.dart` |
+| 2026/06/17 | 备份恢复包含海报图片：DataBackupCore 导出时读取 `cover_path` 图片并嵌入 `cover_image_base64`；导入时解码写回磁盘并更新 `cover_path`；备份版本号升级到 3 | `data_backup.dart`, `cover_helper.dart` |
+| 2026/06/17 | Phase 1 数据层统一：数据库升级到 v11，迁移 performances 残留 seat/price/actual_price 到 tickets，并把已买且日期已过的场次持久化为 watched；新增 `getPerformanceWithTicket` / `getPerformancesWithTicketsByShowId` / `getPerformancesWithTicketsByDate` 等 JOIN 查询；`ShowManagementScreen` 改读写 tickets；`AddShowScreen` 保存时创建 Ticket；`replaceAllPerformances` 重建场次时保留原有 ticket；`Performance` 模型 seat/price/actualPrice 加 `@Deprecated` | `database_helper_io.dart`, `database_helper_web.dart`, `show_management_screen.dart`, `add_show_screen.dart`, `performance.dart` |
+| 2026/06/17 | 已观演状态持久化：详情页状态循环扩展为 unmarked→想看→已买→已观演→未标记；排期板、月历筛选、ProfileStats 优先判断持久 `status == 'watched'`，旧数据按日期回退 | `unified_show_detail_screen.dart`, `gantt_screen.dart`, `calendar_screen.dart`, `profile_stats.dart`, `profile_screen.dart` |
+| 2026/06/17 | 月历默认筛选改为「全部」：字段默认值已改，但 `initState` 中仍回退到 `bought`，导致新添加剧目找不到。已同步修复 `initState` 回退值为 `CalendarFilter.all`，并确保 `_shouldInclude` 在「全部」下包含未标记演出 | `calendar_screen.dart` |
+| 2026/06/17 | 修复月历票根列表加载卡住：选中日期后底部票根区一直转圈显示「0 场」，原因是 sqflite `rawQuery` 返回的 Map 可能是不可变的，直接写入 `ticket_seat` 会抛异常，导致 `_isLoading` 无法复位。改为复制 Map 后再写入，并加 `try/catch/finally` 保证加载状态一定关闭 | `calendar_screen.dart` |
+| 2026/06/17 | 排期板第二次实机精调：tab 去文字仅保留 icon；点击当前 tab 强制重建使 icon 随 3天/7天 模式更新；今日恢复淡紫色光效；去掉农历；放大星期；日期改为 M.D 格式；周末右侧内容区加淡灰横条标注 | `gantt_screen.dart`, `main_screen.dart` |
+| 2026/06/17 | 排期板实机反馈修复：恢复实体 Header、年月标题左对齐；底部 tab 切换改为 `BottomNavigationBar` 以支持点击当前 tab 切换 3天/7天 模式；模式切换时以屏幕中心日期为锚点重新居中；新增屏幕中心日期淡紫色底部高光作为焦点提示 | `gantt_screen.dart`, `main_screen.dart` |
+| 2026/06/17 | 排期板视觉打磨（第一阶段）：Header 改为剧场节目单风格（居中标题 + 渐变装饰线），标题点击弹出月份选择器；管理台入口改为安静光点风格；今日行/卡片改用暖金色 WarmSpotlight 呼吸光效、脚灯条与侧边光；空日期背景暗化并删除「无排期」文字，叠加天鹅绒纹理；海报蒙版降低、卡片光晕/溢光/底部投影增强、描边改为深色；时间改为无 emoji 邮票风格；聚焦模式卡司只显示主演前 3 条且角色/演员对比度拉开；剧名常驻卡片底部；微观模式新增状态色圆点；日期标签增加农历、字号全比例化 | `gantt_screen.dart`, `lib/widgets/gantt/cast_list.dart`, `lib/widgets/gantt/gantt_decorations.dart` |
 | 2026/06/17 | 排期页交互最终调整：左上角月份标题移除点击跳转管理台功能（仅作标题展示）；右上角保留直接跳转管理台入口。底部「排期」tab 图标改为自定义 `ScheduleTabIcon`：3天聚焦模式显示 3 条横线，7天宏观模式显示 7 条横线，带 200ms 淡入缩放动画；模式切换继续由该 tab 在「已在排期页」时承担 | `gantt_screen.dart`, `main_screen.dart`, `schedule_tab_icon.dart` |
 | 2026/06/17 | 排期页交互调整：右上角紫色按钮从底部 sheet 改为直接跳转 `MonthlyWorkbenchScreen` 管理台；清理失效的 `_showManagementMenu`/`_showAddMenu`/`_pickImageAndRecognize` 及对应 OCR 导入；空状态提示更新。底部「排期」tab 图标改为根据当前 3天/7天模式动态显示 `view_column`/`view_week`，并带 200ms 淡入缩放切换动画；已在排期页时点击该 tab 调用 `GanttScreenState.toggleMode()` 切换模式，从其他 tab 首次点击仅导航到排期页 | `gantt_screen.dart`, `main_screen.dart` |
 | 2026/06/17 | 月历首页阶段三：与排期板视觉统一——today 单元格/无演出 today 单元格加 `WarmSpotlight` 紫色追光；海报单元格加顶部渐变蒙层、1px 白边、紫色 today 角标；选中态/周视图显示迷你 `StatusBadge`；票根卡片加 `coverColorForShow` 环境光晕。个人中心数据联动——`CalendarScreen` 新增 `initialFilter`/`initialFocusedDay`；Hero 指标卡片（已观演/已购买/关注剧目/已买场次）点击跳转对应过滤月历；月度柱状图 bar 点击跳转对应月份 | `calendar_poster_cell.dart`, `calendar_cell.dart`, `calendar_screen.dart`, `profile_screen.dart`, `simple_bar_chart.dart` |
@@ -447,12 +467,12 @@ class Actor {
 | **个人中心画廊墙** | ✅ 完成 | 总场次/总花费/票面价/省钱额/追踪剧目数/Top3演员 |
 | **设置页拆分** | ✅ 完成 | OCR配置、备份恢复、退出登录独立页面 |
 | **AddShowScreen 溢出修复** | ✅ 完成 | 表头 Row 0.5px 像素舍入溢出修复 |
-| **排期板灯光秀设计** | 📋 已设计 | 光的层次、今日感、海报发光、侧光效果、全比例布局 |
-| **详情页重构设计** | 📋 已设计 | 展示+编辑分离、待办清单、海报作为视觉标识 |
+| **排期板灯光秀设计** | 🔄 打磨中（第一阶段视觉已落地） | Header节目单风格、今日暖金光效、空日期暗化、海报质感、字体重排、农历标签；双指缩放/边缘侧光待第二阶段 |
+| **详情页重构设计** | ✅ 完成 | 展示+编辑分离、待办清单、海报作为视觉标识、状态星星循环切换、光岛卡片风格 |
 | **管理台重构设计** | 📋 已设计 | 海报网格画廊、月份筛选、点击进入管理 |
 | **月历首页打磨** | ✅ 完成 | 固定头部、右上角筛选、满屏月历、折叠聚焦行、跨月日期显示 |
-| **个人中心重构** | ⏳ 待设计 | 数据仪表盘+收藏管理+设置入口，具体方案待讨论 |
-| **可视化图表** | ⏳ 待设计 | 必须做，具体图表类型待讨论 |
+| **个人中心重构** | ✅ 完成 | 数据仪表盘+时间切片+Hero指标+管理入口聚合+指标/图表下钻月历 |
+| **可视化图表** | ✅ 完成 | 月度柱状/演员排名/剧场分布/时段环形，月度柱状图支持下钻 |
 | 演出提醒 | ❌ 砍掉/延后 | 应用内看到就行 |
 | 观演记录 | ❌ 砍掉 | 不是排期管理的核心 |
 
