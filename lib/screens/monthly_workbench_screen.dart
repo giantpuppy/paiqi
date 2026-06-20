@@ -125,6 +125,17 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
       );
     }
 
+    // 按剧目最早场次日期升序排列，开始时间相同则按最晚场次日期升序
+    shows.sort((a, b) {
+      final aStart = stats[a.id]?.startDate ?? '';
+      final bStart = stats[b.id]?.startDate ?? '';
+      final startCmp = aStart.compareTo(bStart);
+      if (startCmp != 0) return startCmp;
+      final aEnd = stats[a.id]?.endDate ?? '';
+      final bEnd = stats[b.id]?.endDate ?? '';
+      return aEnd.compareTo(bEnd);
+    });
+
     if (mounted) {
       setState(() {
         _shows = shows;

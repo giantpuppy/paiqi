@@ -523,6 +523,11 @@ class DatabaseHelper {
     return db.delete('shows', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> deleteAllShows() async {
+    final db = await instance.database;
+    return db.delete('shows');
+  }
+
   Future<Performance> createPerformance(Performance perf) async {
     final db = await instance.database;
     final id = await db.insert('performances', perf.toMap());
@@ -700,10 +705,20 @@ class DatabaseHelper {
     return db.delete('performances', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> deleteAllPerformances() async {
+    final db = await instance.database;
+    return db.delete('performances');
+  }
+
   Future<CastMember> createCastMember(CastMember cast) async {
     final db = await instance.database;
     final id = await db.insert('cast_members', cast.toMap());
     return cast.copyWith(id: id);
+  }
+
+  Future<int> deleteAllCastMembers() async {
+    final db = await instance.database;
+    return db.delete('cast_members');
   }
 
   Future<List<CastMember>> getCastMembersByPerformanceId(int performanceId) async {

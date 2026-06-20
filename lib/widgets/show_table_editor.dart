@@ -398,7 +398,7 @@ class _ShowTableEditorState extends State<ShowTableEditor> {
   Widget build(BuildContext context) {
     const dateW = 64.0;
     const timeW = 54.0;
-    const roleW = 80.0;
+    const roleW = 100.0;
     const headerH = 36.0;
     const cellH = 44.0;
     const fixedW = dateW + timeW + 0.5;

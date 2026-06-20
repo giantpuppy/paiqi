@@ -17,9 +17,9 @@ void main() async {
   final currentUser = await UserService.getCurrentUsername();
   String? effectiveUser = autoLoginUser ?? currentUser;
 
-  // Web 演示模式：没有用户时自动创建 demo 账号并导入演示数据
-  // 这样评委/观众扫码打开的线上预览不会是一片空白
-  if (effectiveUser == null && kIsWeb) {
+  // Demo 模式：没有用户时自动创建 demo 账号并导入演示数据
+  // 产品发布会专用，确保任何设备打开应用都能直接看到完整数据
+  if (effectiveUser == null) {
     const demoUsername = 'demo';
     final users = await UserService.getAllUsers();
     if (!users.any((u) => u.username == demoUsername)) {
@@ -31,7 +31,19 @@ void main() async {
 
   if (effectiveUser != null) {
     await DatabaseHelper.switchUser(effectiveUser);
-    final importResult = await ScheduleImportService.importBundleIfNeeded(effectiveUser);
+    final isDemoUser = effectiveUser == 'demo';
+    // Demo 模式：每次启动强制清空旧数据并重新导入，确保发布会演示数据完整最新
+    if (isDemoUser) {
+      await ScheduleImportService.resetFlag(effectiveUser);
+      final db = DatabaseHelper.instance;
+      await db.deleteAllCastMembers();
+      await db.deleteAllPerformances();
+      await db.deleteAllShows();
+    }
+    final importResult = await ScheduleImportService.importBundleIfNeeded(
+      effectiveUser,
+      autoJoinScheduleFlow: isDemoUser,
+    );
     if (kDebugMode && importResult != null) {
       debugPrint('ScheduleImportService: $importResult');
     }

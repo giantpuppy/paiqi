@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/show.dart';
@@ -205,7 +206,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: 20,
         shouldAnimate: true,
         child: GlowCard(
-          onTap: _openSettings,
+          onTap: kIsWeb ? null : _openSettings,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           borderRadius: 20,
           child: Row(
@@ -247,11 +248,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
               ),
-              Icon(
-                Icons.settings_outlined,
-                color: Colors.white.withValues(alpha: 0.5),
-                size: 22,
-              ),
+              if (!kIsWeb)
+                Icon(
+                  Icons.settings_outlined,
+                  color: Colors.white.withValues(alpha: 0.5),
+                  size: 22,
+                ),
             ],
           ),
         ),

@@ -293,16 +293,23 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
       final ticket = perfId != null
           ? await showBoughtFormSheet(context, performanceId: perfId)
           : null;
-      setState(() {
-        entry.status = 'bought';
-        if (ticket != null) {
-          entry.ticket = ticket;
-        }
-      });
+      _applyStatus(perfIndex, 'bought', ticket: ticket);
       return;
     }
 
-    setState(() => entry.status = next);
+    _applyStatus(perfIndex, next);
+  }
+
+  /// 统一设置状态并同步排期流：非未标记自动加入，未标记自动移出
+  void _applyStatus(int perfIndex, String status, {Ticket? ticket}) {
+    final entry = _performances[perfIndex];
+    setState(() {
+      entry.status = status;
+      entry.isInScheduleFlow = status != 'unmarked';
+      if (ticket != null) {
+        entry.ticket = ticket;
+      }
+    });
   }
 
   Future<void> _editTicket(int perfIndex) async {
@@ -487,7 +494,7 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, true),
         ),
         title: Text(
           _show?.name ?? '剧目管理',
@@ -718,7 +725,7 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
         break;
       case 'want_to_see':
         if (entry.status != 'want_to_see') {
-          setState(() => entry.status = 'want_to_see');
+          _applyStatus(perfIndex, 'want_to_see');
         }
         break;
       case 'bought':
@@ -731,12 +738,12 @@ class _ShowManagementScreenState extends State<ShowManagementScreen> {
           if (entry.status == 'bought') {
             _cycleStatus(perfIndex);
           } else {
-            setState(() => entry.status = 'watched');
+            _applyStatus(perfIndex, 'watched');
           }
         }
         break;
       case 'unmarked':
-        setState(() => entry.status = 'unmarked');
+        _applyStatus(perfIndex, 'unmarked');
         break;
       case 'ticket':
         _editTicket(perfIndex);

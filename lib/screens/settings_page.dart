@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/actor.dart';
@@ -198,58 +199,61 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 16),
 
-                // OCR 识别设置
-                _buildSectionHeader('识别'),
-                _buildManageCard(
-                  icon: Icons.document_scanner,
-                  title: 'OCR 识别设置',
-                  subtitle: '配置百度 OCR API Key',
-                  onTap: () => Navigator.push(
-                    context,
-                    SlideFadeRoute(page: const OcrSettingsScreen()),
+                // Web Demo 下隐藏识别与数据管理入口，避免误操作破坏演示数据
+                if (!kIsWeb) ...[
+                  // OCR 识别设置
+                  _buildSectionHeader('识别'),
+                  _buildManageCard(
+                    icon: Icons.document_scanner,
+                    title: 'OCR 识别设置',
+                    subtitle: '配置百度 OCR API Key',
+                    onTap: () => Navigator.push(
+                      context,
+                      SlideFadeRoute(page: const OcrSettingsScreen()),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-                // 数据备份与恢复
-                _buildSectionHeader('数据'),
-                _buildManageCard(
-                  icon: Icons.download,
-                  title: '导出备份',
-                  subtitle: 'JSON 格式',
-                  onTap: () async {
-                    await DataBackup.exportToJson();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('备份已下载')),
-                      );
-                    }
-                  },
-                ),
-                const SizedBox(height: 8),
-                _buildManageCard(
-                  icon: Icons.upload,
-                  title: '导入恢复',
-                  subtitle: '选择 JSON 备份文件',
-                  onTap: _handleImport,
-                ),
-                const SizedBox(height: 8),
-                _buildManageCard(
-                  icon: Icons.playlist_remove,
-                  title: '重置所有剧目到管理台',
-                  subtitle: '所有剧目移出排期流，回到管理台',
-                  onTap: _resetAllShowsToManagement,
-                ),
-                const SizedBox(height: 8),
-                _buildManageCard(
-                  icon: Icons.playlist_add,
-                  title: '导入卡司排期汇总',
-                  subtitle: '补充 13 个剧目 / 65 场演出',
-                  onTap: () => Navigator.push(
-                    context,
-                    SlideFadeRoute(page: const ImportScheduleScreen()),
-                  ).then((_) => _refresh()),
-                ),
+                  // 数据备份与恢复
+                  _buildSectionHeader('数据'),
+                  _buildManageCard(
+                    icon: Icons.download,
+                    title: '导出备份',
+                    subtitle: 'JSON 格式',
+                    onTap: () async {
+                      await DataBackup.exportToJson();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('备份已下载')),
+                        );
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _buildManageCard(
+                    icon: Icons.upload,
+                    title: '导入恢复',
+                    subtitle: '选择 JSON 备份文件',
+                    onTap: _handleImport,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildManageCard(
+                    icon: Icons.playlist_remove,
+                    title: '重置所有剧目到管理台',
+                    subtitle: '所有剧目移出排期流，回到管理台',
+                    onTap: _resetAllShowsToManagement,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildManageCard(
+                    icon: Icons.playlist_add,
+                    title: '导入卡司排期汇总',
+                    subtitle: '补充 13 个剧目 / 65 场演出',
+                    onTap: () => Navigator.push(
+                      context,
+                      SlideFadeRoute(page: const ImportScheduleScreen()),
+                    ).then((_) => _refresh()),
+                  ),
+                ],
               ],
             ),
     );
@@ -378,11 +382,13 @@ class _SettingsPageState extends State<SettingsPage> {
                             subtitle: show.theater != null
                                 ? Text(show.theater!)
                                 : null,
-                            trailing: IconButton(
-                              icon: Icon(Icons.delete_outline,
-                                  color: Colors.red[300]),
-                              onPressed: () => _deleteShow(show.id!),
-                            ),
+                            trailing: kIsWeb
+                                ? null
+                                : IconButton(
+                                    icon: Icon(Icons.delete_outline,
+                                        color: Colors.red[300]),
+                                    onPressed: () => _deleteShow(show.id!),
+                                  ),
                             onTap: () async {
                               Navigator.pop(context);
                               final result = await Navigator.push(
@@ -491,11 +497,13 @@ class _SettingsPageState extends State<SettingsPage> {
                             subtitle: actor.note != null
                                 ? Text(actor.note!)
                                 : null,
-                            trailing: IconButton(
-                              icon: Icon(Icons.delete_outline,
-                                  color: Colors.red[300]),
-                              onPressed: () => _deleteActor(actor.id!),
-                            ),
+                            trailing: kIsWeb
+                                ? null
+                                : IconButton(
+                                    icon: Icon(Icons.delete_outline,
+                                        color: Colors.red[300]),
+                                    onPressed: () => _deleteActor(actor.id!),
+                                  ),
                           );
                         },
                       ),
