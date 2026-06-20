@@ -787,11 +787,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget _buildTicketCard(Map<String, dynamic> perf, String status,
       Color statusColor, String? coverPath, int showId) {
     final showName = perf['show_name'] ?? '未知剧目';
-    final theater = perf['theater'] ?? '未知剧场';
+    final theater = (perf['theater'] as String?)?.trim() ?? '';
     final rawDate = perf['date'] as String? ?? '';
     final rawTime = perf['time'] as String? ?? '';
     final date = rawDate.length >= 10 ? rawDate.substring(5) : rawDate;
-    final time = rawTime.isNotEmpty ? rawTime.substring(0, 5) : '';
+    // 安全截取时间：取前5字符（如 19:30），不足5字符原样显示
+    final time = rawTime.length >= 5
+        ? rawTime.substring(0, 5)
+        : rawTime;
+    debugPrint('🎫 card: show=$showName theater="$theater" time="$time" rawTime="$rawTime"');
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -910,16 +914,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _theaterAbbr(theater),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: metaFontSize,
-                                  color: const Color(0xFF8A8F98),
+                              if (theater.isNotEmpty)
+                                Text(
+                                  _theaterAbbr(theater),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: metaFontSize,
+                                    color: statusColor.withValues(alpha: 0.7),
+                                  ),
                                 ),
-                              ),
-                              SizedBox(height: cardHeight * 0.01),
+                              if (theater.isNotEmpty)
+                                SizedBox(height: cardHeight * 0.01),
                               Text(
                                 showName,
                                 maxLines: 1,
