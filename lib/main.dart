@@ -52,6 +52,7 @@ void main() async {
   if (kDebugMode) {
     await seedTestData();
   }
+
   runApp(PaiqiApp(initialUser: effectiveUser));
 }
 
