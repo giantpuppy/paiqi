@@ -988,6 +988,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget _buildFilterToggle() {
     final filterColor =
         _filter == CalendarFilter.all ? null : _statusColorForFilter(_filter);
+    final filterIcon = switch (_filter) {
+      CalendarFilter.bought => Icons.confirmation_num,
+      CalendarFilter.wantToSee => Icons.star,
+      CalendarFilter.watched => Icons.visibility,
+      CalendarFilter.all => null,
+    };
     return GestureDetector(
       onTap: _showFilterMenu,
       child: Container(
@@ -1002,14 +1008,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (filterColor != null) ...[
-              Container(
-                width: 5, height: 5,
-                decoration: BoxDecoration(
-                  color: filterColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
+            if (filterIcon != null) ...[
+              Icon(filterIcon, size: 14, color: filterColor),
               const SizedBox(width: 6),
             ],
             const Icon(Icons.tune, size: 16, color: Color(0xFF8A8F98)),
@@ -1041,18 +1041,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
       items: CalendarFilter.values.map((filter) {
         final isSelected = _filter == filter;
         final color = _statusColorForFilter(filter);
+        final icon = switch (filter) {
+          CalendarFilter.bought => Icons.confirmation_num,
+          CalendarFilter.wantToSee => Icons.star,
+          CalendarFilter.watched => Icons.visibility,
+          CalendarFilter.all => null,
+        };
         return PopupMenuItem(
           value: filter,
           child: Row(
             children: [
-              if (filter != CalendarFilter.all) ...[
-                Container(
-                  width: 6, height: 6,
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                ),
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: isSelected ? color : color.withValues(alpha: 0.5)),
                 const SizedBox(width: 10),
               ] else
-                const SizedBox(width: 16),
+                const SizedBox(width: 26),
               Text(
                 filter.label,
                 style: TextStyle(
