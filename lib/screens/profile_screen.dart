@@ -7,17 +7,14 @@ import '../models/ticket.dart';
 import '../utils/page_transitions.dart';
 import '../models/cast_member.dart';
 import '../models/profile_stats.dart';
-import '../services/user_service.dart';
 import '../widgets/charts/chart_theme.dart';
-import '../widgets/charts/simple_bar_chart.dart';
-import '../widgets/charts/horizontal_bar_chart.dart';
-import '../widgets/charts/donut_chart.dart';
 import '../widgets/warm_spotlight.dart';
 import '../widgets/glow_card.dart';
 import '../widgets/poster_fallback.dart';
 import '../widgets/breathing_icon.dart';
-import 'calendar_screen.dart';
 import 'settings_page.dart';
+import 'ranking_detail_page.dart';
+import 'performance_list_page.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -32,33 +29,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<Ticket> _tickets = [];
   List<CastMember> _castMembers = [];
   bool _isLoading = true;
-  String? _currentUser;
   bool _needsRefresh = true;
 
-  TimeSlice _currentSlice = TimeSlice.all;
-  ProfileStats _stats = _emptyStats(TimeSlice.all);
-  bool _isActorDonut = false;
-  int _showListTabIndex = 0;
+  // 时间筛选
+  int? _selectedYear;
+  int? _selectedMonth;
+  List<int> _availableYears = [];
 
-  static ProfileStats _emptyStats(TimeSlice slice) {
-    return ProfileStats(
-      timeSlice: slice,
-      totalSessions: 0,
-      watchedSessions: 0,
-      upcomingSessions: 0,
-      totalPaid: 0,
-      faceValue: 0,
-      savedValue: 0,
-      totalDurationHours: 0,
-      showsTracked: 0,
-      monthlySessions: List.generate(12, (_) => 0),
-      actorRanking: const [],
-      theaterDistribution: const [],
-      showRanking: const [],
-      timeSlotDistribution: const {'下午场': 0, '傍晚场': 0, '晚场': 0},
-      wantToSeePerformances: const [],
-    );
-  }
+  ProfileStats _stats = ProfileStats.fromData(
+    slice: const TimeSlice.all(),
+    performances: const [],
+    shows: const [],
+    castMembers: const [],
+    tickets: const [],
+  );
+
+  // 金额隐藏（默认隐藏）
+  bool _amountHidden = true;
+
+  static const int _defaultShowRows = 4;
 
   String _formatCurrency(double value) {
     if (value == 0) return '0';
@@ -71,6 +60,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       buffer.write(s[i]);
     }
     return buffer.toString();
+  }
+
+  TimeSlice get _currentTimeSlice {
+    if (_selectedMonth != null && _selectedYear != null) {
+      return TimeSlice.month(_selectedYear!, _selectedMonth!);
+    } else if (_selectedYear != null) {
+      return TimeSlice.year(_selectedYear!);
+    }
+    return const TimeSlice.all();
   }
 
   @override
@@ -100,16 +98,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final performances = await db.getAllPerformances();
     final tickets = await db.getAllTickets();
     final castMembers = await db.getAllCastMembers();
-    final currentUser = await UserService.getCurrentUsername();
+    // 提取可用年份
+    final years = <int>{};
+    for (final p in performances) {
+      final date = DateTime.tryParse(p.date);
+      if (date != null) years.add(date.year);
+    }
+    final sortedYears = years.toList()..sort();
 
     setState(() {
       _shows = shows;
       _performances = performances;
       _tickets = tickets;
       _castMembers = castMembers;
-      _currentUser = currentUser;
+      _availableYears = sortedYears;
       _stats = ProfileStats.fromData(
-        slice: _currentSlice,
+        slice: _currentTimeSlice,
         performances: performances,
         shows: shows,
         castMembers: castMembers,
@@ -122,43 +126,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _recomputeStats() {
     setState(() {
       _stats = ProfileStats.fromData(
-        slice: _currentSlice,
+        slice: _currentTimeSlice,
         performances: _performances,
         shows: _shows,
         castMembers: _castMembers,
         tickets: _tickets,
       );
     });
-  }
-
-  void _navigateToCalendar(CalendarFilter filter, {DateTime? focusedDay}) {
-    Navigator.push(
-      context,
-      SlideFadeRoute(
-        page: CalendarScreen(
-          initialFilter: filter,
-          initialFocusedDay: focusedDay,
-        ),
-      ),
-    );
-  }
-
-  void _openSettings() {
-    Navigator.push(
-      context,
-      SlideFadeRoute(page: const SettingsPage()),
-    );
-  }
-
-  Future<void> _removeFromWantToSee(Performance performance) async {
-    final updated = performance.copyWith(status: 'unmarked');
-    await DatabaseHelper.instance.updatePerformance(updated);
-    await _loadData();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已从想看清单移除')),
-      );
-    }
   }
 
   Show? _showForPerformance(Performance performance) {
@@ -169,6 +143,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// 获取某场次的卡司演员名列表
+  List<String> _actorsForPerformance(Performance performance) {
+    return _castMembers
+        .where((cm) => cm.performanceId == performance.id)
+        .map((cm) => cm.actorName)
+        .toList();
+  }
+
+  void _openSettings() {
+    Navigator.push(
+      context,
+      SlideFadeRoute(page: const SettingsPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -177,23 +166,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(child: _buildHeader()),
-                SliverToBoxAdapter(child: _buildTotalSessionsHero()),
-                SliverToBoxAdapter(child: _buildTimeSliceController()),
-                SliverToBoxAdapter(child: _buildShowRankingChart()),
-                SliverToBoxAdapter(child: _buildChartGrid()),
-                SliverToBoxAdapter(child: _buildAmountCard()),
-                SliverToBoxAdapter(child: _buildStatusCards()),
-                SliverToBoxAdapter(child: _buildMonthlyChart()),
-                SliverToBoxAdapter(child: _buildShowLists()),
-                SliverToBoxAdapter(child: _buildFavoritePlaceholder()),
+                SliverToBoxAdapter(child: _buildTimeFilter()),
+                SliverToBoxAdapter(child: _buildStatsRow()),
+                SliverToBoxAdapter(child: _buildShowRankingList()),
+                SliverToBoxAdapter(child: _buildActorRankingList()),
+                SliverToBoxAdapter(child: _buildTheaterRankingList()),
+                SliverToBoxAdapter(child: _buildWantToSeeCard()),
+                SliverToBoxAdapter(child: _buildBoughtCard()),
                 const SliverToBoxAdapter(child: SizedBox(height: 32)),
               ],
             ),
     );
   }
 
+  // ─────────────────── Header ───────────────────
+
   Widget _buildHeader() {
-    final displayName = _currentUser ?? '未登录';
+    const displayName = 'GlueeulG';
     final statusBarHeight = MediaQuery.of(context).padding.top;
     return Padding(
       padding: EdgeInsets.fromLTRB(24, statusBarHeight + 16, 24, 0),
@@ -211,17 +200,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           borderRadius: 20,
           child: Row(
             children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundColor:
-                    Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
-                child: Text(
-                  displayName.substring(0, 1).toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: Image.asset(
+                  'assets/profile_avatar.png',
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
                 ),
               ),
               const SizedBox(width: 16),
@@ -229,9 +214,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
@@ -261,197 +246,398 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildTotalSessionsHero() {
+  // ─────────────────── 时间筛选胶囊 ───────────────────
+
+  Widget _buildTimeFilter() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
-      child: GlowCard(
-        padding: const EdgeInsets.all(ChartTheme.cardPadding),
-        borderRadius: ChartTheme.cardRadius,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+      child: Row(
+        children: [
+          _buildFilterChip(
+            label: '全部',
+            isSelected: _currentTimeSlice.isAll,
+            onTap: () {
+              setState(() {
+                _selectedYear = null;
+                _selectedMonth = null;
+              });
+              _recomputeStats();
+            },
+          ),
+          const SizedBox(width: 8),
+          _buildYearChip(),
+          const SizedBox(width: 8),
+          _buildMonthChip(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+              : ChartTheme.background,
+          borderRadius: BorderRadius.circular(10),
+          border: isSelected
+              ? Border.all(
+                  color:
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                  width: 1,
+                )
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            color: isSelected ? Theme.of(context).colorScheme.primary : ChartTheme.label,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildYearChip() {
+    final isSelected = _currentTimeSlice.isYear || _currentTimeSlice.isMonth;
+    final label = _selectedYear != null ? '$_selectedYear年' : '年份▾';
+
+    return GestureDetector(
+      onTap: () => _showYearPicker(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+              : ChartTheme.background,
+          borderRadius: BorderRadius.circular(10),
+          border: isSelected
+              ? Border.all(
+                  color:
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                  width: 1,
+                )
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              '观看总场次',
+            Text(
+              label,
               style: TextStyle(
-                fontSize: ChartTheme.titleFontSize,
-                fontWeight: FontWeight.w600,
-                color: ChartTheme.label,
+                fontSize: 13,
+                fontWeight:
+                    isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : ChartTheme.label,
               ),
             ),
-            const SizedBox(height: 12),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '${_stats.totalSessions}',
-                style: const TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                  color: Colors.white,
+            if (isSelected) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _selectedYear = null;
+                    _selectedMonth = null;
+                  });
+                  _recomputeStats();
+                },
+                child: Icon(
+                  Icons.close,
+                  size: 14,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '覆盖 ${_stats.showsTracked} 部剧目',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white.withValues(alpha: 0.45),
-              ),
-            ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTimeSliceController() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: ChartTheme.background,
-                borderRadius: BorderRadius.circular(10),
+  Widget _buildMonthChip() {
+    final isSelected = _currentTimeSlice.isMonth;
+    final enabled = _selectedYear != null;
+    final label = _selectedMonth != null ? '$_selectedMonth月' : '月份▾';
+
+    return GestureDetector(
+      onTap: enabled ? () => _showMonthPicker() : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+              : enabled
+                  ? ChartTheme.background
+                  : ChartTheme.background.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(10),
+          border: isSelected
+              ? Border.all(
+                  color:
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                  width: 1,
+                )
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight:
+                    isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : enabled
+                        ? ChartTheme.label
+                        : ChartTheme.muted,
               ),
-              child: Row(
-                children: TimeSlice.values.map((slice) {
-                  final isSelected = _currentSlice == slice;
-                  return Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() => _currentSlice = slice);
-                        _recomputeStats();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
+            ),
+            if (isSelected) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () {
+                  setState(() => _selectedMonth = null);
+                  _recomputeStats();
+                },
+                child: Icon(
+                  Icons.close,
+                  size: 14,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showYearPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '选择年份',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              ..._availableYears.map((year) {
+                final isSelected = _selectedYear == year;
+                return ListTile(
+                  title: Text(
+                    '$year年',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.normal,
+                      color: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.white,
+                    ),
+                  ),
+                  tileColor: isSelected
+                      ? Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.1)
+                      : null,
+                  onTap: () {
+                    setState(() {
+                      _selectedYear = year;
+                      _selectedMonth = null;
+                    });
+                    _recomputeStats();
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showMonthPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '$_selectedYear年 · 选择月份',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              GridView.count(
+                crossAxisCount: 4,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                childAspectRatio: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: List.generate(12, (index) {
+                  final month = index + 1;
+                  final isSelected = _selectedMonth == month;
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedMonth = month);
+                      _recomputeStats();
+                      Navigator.pop(context);
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.2)
+                            : ChartTheme.background,
+                        borderRadius: BorderRadius.circular(8),
+                        border: isSelected
+                            ? Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.4),
+                              )
+                            : null,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$month月',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                           color: isSelected
-                              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          slice.label,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                            color: isSelected
-                                ? Theme.of(context).colorScheme.primary
-                                : ChartTheme.label,
-                          ),
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.white,
                         ),
                       ),
                     ),
                   );
-                }).toList(),
+                }),
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildShowRankingChart() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-      child: _stats.showRanking.isEmpty
-          ? _buildEmptyChartPlaceholder(title: '观看剧目排序')
-          : GlowCard(
-              padding: const EdgeInsets.all(ChartTheme.cardPadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '观看剧目排序',
-                    style: TextStyle(
-                      fontSize: ChartTheme.titleFontSize,
-                      fontWeight: FontWeight.w600,
-                      color: ChartTheme.label,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  HorizontalBarChart(
-                    data: _stats.showRanking
-                        .map((e) => ChartData(label: e.key, value: e.value))
-                        .toList(),
-                    accentColor: ChartTheme.primary,
-                    displayCount: 5,
-                  ),
-                ],
-              ),
-            ),
-    );
-  }
-
-  Widget _buildMonthlyChart() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-      child: _stats.totalSessions == 0
-          ? _buildEmptyChartPlaceholder(title: '月度观演节奏')
-          : SimpleBarChart(
-              data: List.generate(
-                12,
-                (index) => ChartData(
-                  label: '${index + 1}月',
-                  value: _stats.monthlySessions[index],
-                ),
-              ),
-              title: '月度观演节奏',
-              activeColor: ChartTheme.primary,
-              highlightIndex: DateTime.now().month - 1,
-              onBarTap: (index) => _navigateToCalendar(
-                CalendarFilter.bought,
-                focusedDay: DateTime(DateTime.now().year, index + 1, 1),
-              ),
-            ),
-    );
-  }
-
-  Widget _buildChartGrid() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-      child: Column(
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _buildActorChart()),
-              const SizedBox(width: 12),
-              Expanded(child: _buildTheaterChart()),
+              const SizedBox(height: 16),
             ],
           ),
-          const SizedBox(height: 12),
-          _buildTimeSlotChart(),
+        );
+      },
+    );
+  }
+
+  // ─────────────────── 观剧场次 + 金额（并排） ───────────────────
+
+  Widget _buildStatsRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+      child: Row(
+        children: [
+          Expanded(child: _buildSessionsCard()),
+          const SizedBox(width: 12),
+          Expanded(child: _buildAmountCardCompact()),
         ],
       ),
     );
   }
 
-  Widget _buildActorChart() {
-    if (_stats.actorRanking.isEmpty) {
-      return _buildEmptyChartPlaceholder(title: '演员排名', compact: true);
-    }
-
-    final actorData = _stats.actorRanking
-        .map((e) => ChartData(label: e.key, value: e.value))
-        .toList();
-
+  Widget _buildSessionsCard() {
     return GlowCard(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(ChartTheme.cardPadding),
+      borderRadius: ChartTheme.cardRadius,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '观剧场次数',
+            style: TextStyle(
+              fontSize: ChartTheme.titleFontSize,
+              fontWeight: FontWeight.w600,
+              color: ChartTheme.label,
+            ),
+          ),
+          const SizedBox(height: 12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${_stats.totalSessions}',
+              style: const TextStyle(
+                fontSize: 48,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '覆盖 ${_stats.showsTracked} 部剧目',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAmountCardCompact() {
+    return GlowCard(
+      padding: const EdgeInsets.all(ChartTheme.cardPadding),
+      borderRadius: ChartTheme.cardRadius,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               const Text(
-                '演员排名',
+                '金额统计',
                 style: TextStyle(
                   fontSize: ChartTheme.titleFontSize,
                   fontWeight: FontWeight.w600,
@@ -460,7 +646,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const Spacer(),
               GestureDetector(
-                onTap: () => setState(() => _isActorDonut = !_isActorDonut),
+                onTap: () =>
+                    setState(() => _amountHidden = !_amountHidden),
                 child: Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -468,113 +655,112 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
-                    _isActorDonut ? Icons.bar_chart : Icons.donut_large,
+                    _amountHidden
+                        ? Icons.visibility_off
+                        : Icons.visibility,
                     size: 16,
-                    color: ChartTheme.muted,
+                    color: _amountHidden
+                        ? Theme.of(context).colorScheme.primary
+                        : ChartTheme.muted,
                   ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_isActorDonut)
-            _buildActorDonutChart(actorData)
-          else
-            HorizontalBarChart(
-              data: actorData,
-              accentColor: ChartTheme.watched,
-              displayCount: 5,
+          // 实付金额 - 主位
+          const Text(
+            '实付金额',
+            style: TextStyle(
+              fontSize: 12,
+              color: ChartTheme.muted,
             ),
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _amountHidden
+                  ? '***'
+                  : '¥${_formatCurrency(_stats.totalPaid)}',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 票面金额 - 次位
+          Text(
+            '票面金额',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.35),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _amountHidden
+                ? '***'
+                : '¥${_formatCurrency(_stats.faceValue)}',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              fontFamily: 'monospace',
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildActorDonutChart(List<ChartData> data) {
-    const topCount = 5;
-    final topItems = data.take(topCount).toList();
-    final othersCount = data.skip(topCount).fold(0, (sum, item) => sum + item.value);
+  // ─────────────────── 排序列表通用组件 ───────────────────
 
-    final Map<String, int> chartData = {
-      for (final item in topItems) item.label: item.value,
-    };
-    if (othersCount > 0) {
-      chartData['其他'] = othersCount;
+  Widget _buildRankingList({
+    required String title,
+    required List<MapEntry<String, int>> data,
+    required Color accentColor,
+  }) {
+    if (data.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+        child: GlowCard(
+          padding: const EdgeInsets.all(ChartTheme.cardPadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: ChartTheme.titleFontSize,
+                  fontWeight: FontWeight.w600,
+                  color: ChartTheme.label,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Center(
+                child: Text(
+                  '暂无数据',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: ChartTheme.muted.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
-    return DonutChart(
-      data: chartData,
-      colors: const [
-        ChartTheme.watched,
-        ChartTheme.primary,
-        ChartTheme.bought,
-        Color(0xFF8A8F98),
-        Color(0xFF6B5BCD),
-        Color(0xFFD4A853),
-      ],
-    );
-  }
+    final maxValue = data.first.value.toDouble();
+    final displayData = data.take(_defaultShowRows).toList();
+    final hasMore = data.length > _defaultShowRows;
 
-  Widget _buildTheaterChart() {
-    return GlowCard(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '剧场分布',
-            style: TextStyle(
-              fontSize: ChartTheme.titleFontSize,
-              fontWeight: FontWeight.w600,
-              color: ChartTheme.label,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _stats.theaterDistribution.isEmpty
-              ? _buildCompactEmptyPlaceholder()
-              : HorizontalBarChart(
-                  data: _stats.theaterDistribution
-                      .map((e) => ChartData(label: e.key, value: e.value))
-                  .toList(),
-                  accentColor: ChartTheme.bought,
-                  displayCount: 5,
-                ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTimeSlotChart() {
-    return GlowCard(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '时段偏好',
-            style: TextStyle(
-              fontSize: ChartTheme.titleFontSize,
-              fontWeight: FontWeight.w600,
-              color: ChartTheme.label,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _stats.totalSessions == 0
-              ? _buildCompactEmptyPlaceholder()
-              : DonutChart(
-                  data: _stats.timeSlotDistribution,
-                  colors: const [
-                    ChartTheme.watched,
-                    ChartTheme.primary,
-                    ChartTheme.bought,
-                  ],
-                ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAmountCard() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
       child: GlowCard(
@@ -582,107 +768,141 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '金额统计',
-              style: TextStyle(
+            Text(
+              title,
+              style: const TextStyle(
                 fontSize: ChartTheme.titleFontSize,
                 fontWeight: FontWeight.w600,
                 color: ChartTheme.label,
               ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '实付金额',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: ChartTheme.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '¥${_formatCurrency(_stats.totalPaid)}',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '票面金额',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: ChartTheme.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '¥${_formatCurrency(_stats.faceValue)}',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: ChartTheme.watched,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
             const SizedBox(height: 12),
-            Text(
-              '省钱 ¥${_formatCurrency(_stats.savedValue)}',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white.withValues(alpha: 0.45),
+            ...displayData.asMap().entries.map((entry) {
+              final rank = entry.key + 1;
+              final item = entry.value;
+              final ratio = maxValue > 0 ? item.value / maxValue : 0.0;
+              return _buildRankingRow(
+                rank: rank,
+                name: item.key,
+                count: item.value,
+                ratio: ratio,
+                accentColor: accentColor,
+                showDivider: entry.key > 0,
+              );
+            }),
+            if (hasMore)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    SlideFadeRoute(
+                      page: RankingDetailPage(
+                        title: title,
+                        data: data,
+                        accentColor: accentColor,
+                      ),
+                    ),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '查看全部 ${data.length} ▾',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatusCards() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+  Widget _buildRankingRow({
+    required int rank,
+    required String name,
+    required int count,
+    required double ratio,
+    required Color accentColor,
+    required bool showDivider,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        border: showDivider
+            ? Border(
+                top: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  width: 0.5,
+                ),
+              )
+            : null,
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         children: [
-          Expanded(
-            child: _MetricCard(
-              label: '已购买',
-              value: '${_stats.upcomingSessions}',
-              accentColor: ChartTheme.bought,
+          SizedBox(
+            width: 24,
+            child: Text(
+              '$rank',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'monospace',
+                color: rank <= 3
+                    ? accentColor
+                    : Colors.white.withValues(alpha: 0.5),
+              ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           Expanded(
-            child: _MetricCard(
-              label: '已观演',
-              value: '${_stats.watchedSessions}',
-              accentColor: ChartTheme.watched,
+            child: Text(
+              name,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // 迷你进度条
+          Container(
+            width: 60,
+            height: 6,
+            decoration: BoxDecoration(
+              color: ChartTheme.grid.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: ratio,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 28,
+            child: Text(
+              '$count',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'monospace',
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
             ),
           ),
         ],
@@ -690,18 +910,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildShowLists() {
-    final now = DateTime.now();
-    final sevenDaysLater = now.add(const Duration(days: 7));
-    final upcomingPerformances = _performances.where((p) {
-      if (p.status != 'bought') return false;
-      final date = DateTime.tryParse(p.date);
-      return date != null &&
-          date.isAfter(now) &&
-          date.isBefore(sevenDaysLater);
-    }).toList();
+  // ─────────────────── 剧目排序 ───────────────────
 
-    final wantToSee = _stats.wantToSeePerformances;
+  Widget _buildShowRankingList() {
+    return _buildRankingList(
+      title: '剧目场次次数',
+      data: _stats.showRanking,
+      accentColor: ChartTheme.primary,
+    );
+  }
+
+  // ─────────────────── 演员排序 ───────────────────
+
+  Widget _buildActorRankingList() {
+    return _buildRankingList(
+      title: '演员场次次数',
+      data: _stats.actorRanking,
+      accentColor: ChartTheme.watched,
+    );
+  }
+
+  // ─────────────────── 剧场排序 ───────────────────
+
+  Widget _buildTheaterRankingList() {
+    return _buildRankingList(
+      title: '剧场场次次数',
+      data: _stats.theaterDistribution,
+      accentColor: ChartTheme.bought,
+    );
+  }
+
+  // ─────────────────── 想看卡片 ───────────────────
+
+  Widget _buildWantToSeeCard() {
+    final performances = _stats.wantToSeePerformances;
+    final count = performances.length;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
@@ -712,24 +955,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Row(
               children: [
-                _buildShowListTab('即将观演', 0, upcomingPerformances.length),
-                const SizedBox(width: 16),
-                _buildShowListTab('想看清单', 1, wantToSee.length),
+                const Text(
+                  '想看',
+                  style: TextStyle(
+                    fontSize: ChartTheme.titleFontSize,
+                    fontWeight: FontWeight.w600,
+                    color: ChartTheme.label,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$count场次',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: _showListTabIndex == 0
-                  ? _buildPerformanceList(
-                      key: const ValueKey('upcoming'),
-                      performances: upcomingPerformances,
-                      emptyIcon: Icons.confirmation_number_outlined,
-                      emptyText: '未来 7 天内没有即将观演的场次',
-                    )
-                  : _buildWantToSeeList(
-                      key: const ValueKey('want_to_see'),
-                    ),
+            _buildPerformanceListPreview(
+              performances: performances,
+              emptyIcon: Icons.star_border,
+              emptyText: '暂无想看的剧目',
+              onViewAll: () => Navigator.push(
+                context,
+                SlideFadeRoute(
+                  page: PerformanceListPage(
+                    title: '想看列表',
+                    performances: performances,
+                    shows: _shows,
+                    castMembers: _castMembers,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -737,130 +1008,129 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildShowListTab(String label, int index, int count) {
-    final isSelected = _showListTabIndex == index;
-    return GestureDetector(
-      onTap: () => setState(() => _showListTabIndex = index),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? Colors.white : ChartTheme.label,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
-                      : ChartTheme.grid.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$count',
+  // ─────────────────── 已买卡片 ───────────────────
+
+  Widget _buildBoughtCard() {
+    final performances = _stats.boughtPerformances;
+    final count = performances.length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+      child: GlowCard(
+        padding: const EdgeInsets.all(ChartTheme.cardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '已买',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: ChartTheme.titleFontSize,
                     fontWeight: FontWeight.w600,
-                    color: isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : ChartTheme.muted,
+                    color: ChartTheme.label,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: ChartTheme.bought.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$count场次',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: ChartTheme.bought,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildPerformanceListPreview(
+              performances: performances,
+              emptyIcon: Icons.confirmation_number_outlined,
+              emptyText: '暂无已买的场次',
+              onViewAll: () => Navigator.push(
+                context,
+                SlideFadeRoute(
+                  page: PerformanceListPage(
+                    title: '已买列表',
+                    performances: performances,
+                    shows: _shows,
+                    castMembers: _castMembers,
                   ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Container(
-            width: 24,
-            height: 3,
-            decoration: BoxDecoration(
-              color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
-              borderRadius: BorderRadius.circular(2),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPerformanceList({
-    required Key key,
+  // ─────────────────── 列表预览（最多4行） ───────────────────
+
+  Widget _buildPerformanceListPreview({
     required List<Performance> performances,
     required IconData emptyIcon,
     required String emptyText,
+    required VoidCallback onViewAll,
   }) {
     if (performances.isEmpty) {
       return _buildEmptyListPlaceholder(icon: emptyIcon, text: emptyText);
     }
 
-    return Column(
-      key: key,
-      children: performances.asMap().entries.map((entry) {
-        final index = entry.key;
-        final performance = entry.value;
-        final show = _showForPerformance(performance);
-        return _buildPerformanceRow(
-          performance: performance,
-          show: show,
-          showDivider: index > 0,
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildWantToSeeList({required Key key}) {
-    final performances = _stats.wantToSeePerformances;
-    if (performances.isEmpty) {
-      return _buildEmptyListPlaceholder(
-        icon: Icons.star_border,
-        text: '暂无想看的剧目',
-      );
-    }
+    final displayItems = performances.take(_defaultShowRows).toList();
+    final hasMore = performances.length > _defaultShowRows;
 
     return Column(
-      key: key,
-      children: performances.asMap().entries.map((entry) {
-        final index = entry.key;
-        final performance = entry.value;
-        final show = _showForPerformance(performance);
-        return Dismissible(
-          key: ValueKey('want_${performance.id}'),
-          direction: DismissDirection.endToStart,
-          background: Container(
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF54A45).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.delete_outline, color: Color(0xFFF54A45)),
-          ),
-          onDismissed: (_) => _removeFromWantToSee(performance),
-          child: _buildPerformanceRow(
+      children: [
+        ...displayItems.asMap().entries.map((entry) {
+          final index = entry.key;
+          final performance = entry.value;
+          final show = _showForPerformance(performance);
+          final actors = _actorsForPerformance(performance);
+          return _buildPerformanceRow(
             performance: performance,
             show: show,
+            actors: actors,
             showDivider: index > 0,
+          );
+        }),
+        if (hasMore)
+          GestureDetector(
+            onTap: onViewAll,
+            child: Container(
+              padding: const EdgeInsets.only(top: 12),
+              alignment: Alignment.center,
+              child: Text(
+                '查看全部 ${performances.length} ▾',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
           ),
-        );
-      }).toList(),
+      ],
     );
   }
 
   Widget _buildPerformanceRow({
     required Performance performance,
     required Show? show,
+    required List<String> actors,
     required bool showDivider,
   }) {
     final date = DateTime.tryParse(performance.date);
-    final dateText = date != null ? '${date.month}/${date.day}' : performance.date;
-    final timeText = performance.time?.isNotEmpty == true ? performance.time! : '';
+    final dateText =
+        date != null ? '${date.month}/${date.day}' : performance.date;
+    final actorText = actors.isNotEmpty ? actors.join('、') : '';
 
     return Container(
       decoration: BoxDecoration(
@@ -873,7 +1143,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               )
             : null,
       ),
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         children: [
           Container(
@@ -885,7 +1155,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             clipBehavior: Clip.antiAlias,
             child: show != null
-                ? PosterFallback(showId: show.id ?? 0, showName: show.name, fontSize: 18)
+                ? PosterFallback(
+                    showId: show.id ?? 0,
+                    showName: show.name,
+                    fontSize: 18,
+                  )
                 : const SizedBox.shrink(),
           ),
           const SizedBox(width: 12),
@@ -903,16 +1177,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
-                  '${show?.theater ?? ''}  $dateText $timeText'.trim(),
+                  dateText,
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.white.withValues(alpha: 0.45),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
+                if (actorText.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    actorText,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ],
             ),
           ),
@@ -921,13 +1205,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildEmptyListPlaceholder({required IconData icon, required String text}) {
+  Widget _buildEmptyListPlaceholder({
+    required IconData icon,
+    required String text,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 32),
       child: Center(
         child: Column(
           children: [
-            BreathingIcon(icon: icon, size: 40, color: ChartTheme.muted.withValues(alpha: 0.4)),
+            BreathingIcon(
+              icon: icon,
+              size: 40,
+              color: ChartTheme.muted.withValues(alpha: 0.4),
+            ),
             const SizedBox(height: 12),
             Text(
               text,
@@ -938,182 +1229,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildFavoritePlaceholder() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-      child: GlowCard(
-        onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('收藏功能即将上线')),
-          );
-        },
-        padding: const EdgeInsets.all(ChartTheme.cardPadding),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 64,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: ChartTheme.grid,
-              ),
-              child: Center(
-                child: Icon(
-                  Icons.favorite_border,
-                  color: Colors.white.withValues(alpha: 0.2),
-                  size: 24,
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '我的收藏',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '收藏的剧目、演员和剧场将集中在这里',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.45),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              color: Colors.white.withValues(alpha: 0.3),
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyChartPlaceholder({required String title, bool compact = false}) {
-    return GlowCard(
-      padding: const EdgeInsets.all(ChartTheme.cardPadding),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: ChartTheme.titleFontSize,
-              fontWeight: FontWeight.w600,
-              color: ChartTheme.label,
-            ),
-          ),
-          SizedBox(height: compact ? 16 : 28),
-          Center(
-            child: Column(
-              children: [
-                Icon(
-                  Icons.bar_chart,
-                  color: ChartTheme.muted.withValues(alpha: 0.4),
-                  size: compact ? 24 : 32,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '暂无数据',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: ChartTheme.muted.withValues(alpha: 0.7),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCompactEmptyPlaceholder() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: Center(
-        child: Column(
-          children: [
-            Icon(
-              Icons.bar_chart,
-              color: ChartTheme.muted.withValues(alpha: 0.4),
-              size: 24,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '暂无数据',
-              style: TextStyle(
-                fontSize: 12,
-                color: ChartTheme.muted.withValues(alpha: 0.7),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? accentColor;
-
-  const _MetricCard({
-    required this.label,
-    required this.value,
-    this.accentColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GlowCard(
-      padding: const EdgeInsets.all(14),
-      borderRadius: ChartTheme.cardRadius,
-      glowColor: accentColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontFamily: 'monospace',
-              color: ChartTheme.muted,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace',
-                height: 1.1,
-                color: ChartTheme.value,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

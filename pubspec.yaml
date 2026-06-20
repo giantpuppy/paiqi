@@ -1,5 +1,5 @@
 name: paiqi_app
-description: 看剧排期管理App
+description: 排期天菜——专为中国音乐剧观众打造的排期管理App
 
 publish_to: 'none'
 
@@ -39,6 +39,7 @@ flutter:
   assets:
     - assets/stardrop.png
     - assets/icon_source.png
+    - assets/profile_avatar.png
 
 flutter_launcher_icons:
   android: true

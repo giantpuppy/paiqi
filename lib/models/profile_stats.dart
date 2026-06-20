@@ -3,19 +3,34 @@ import '../models/show.dart';
 import '../models/cast_member.dart';
 import '../models/ticket.dart';
 
-enum TimeSlice { all, year, month }
+/// 时间切片：全部 / 指定年 / 指定年月
+class TimeSlice {
+  final int? year;
+  final int? month;
 
-extension TimeSliceExt on TimeSlice {
+  const TimeSlice.all()
+      : year = null,
+        month = null;
+  const TimeSlice.year(this.year) : month = null;
+  const TimeSlice.month(this.year, this.month);
+
+  bool get isAll => year == null;
+  bool get isYear => year != null && month == null;
+  bool get isMonth => year != null && month != null;
+
   String get label {
-    switch (this) {
-      case TimeSlice.all:
-        return '全部';
-      case TimeSlice.year:
-        return '本年';
-      case TimeSlice.month:
-        return '本月';
-    }
+    if (isAll) return '全部';
+    if (isMonth) return '$year年$month月';
+    return '$year年';
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TimeSlice && year == other.year && month == other.month;
+
+  @override
+  int get hashCode => year.hashCode ^ month.hashCode;
 }
 
 /// 个人中心统计数据聚合模型
@@ -52,6 +67,9 @@ class ProfileStats {
   // 想看清单
   final List<Performance> wantToSeePerformances;
 
+  // 已买清单（bought + watched）
+  final List<Performance> boughtPerformances;
+
   const ProfileStats({
     required this.timeSlice,
     required this.totalSessions,
@@ -68,6 +86,7 @@ class ProfileStats {
     required this.showRanking,
     required this.timeSlotDistribution,
     required this.wantToSeePerformances,
+    required this.boughtPerformances,
   });
 
   int get maxMonthlyValue => monthlySessions.isEmpty
@@ -76,7 +95,11 @@ class ProfileStats {
 
   int get maxActorCount => actorRanking.isEmpty ? 0 : actorRanking.first.value;
 
-  int get maxTheaterCount => theaterDistribution.isEmpty ? 0 : theaterDistribution.first.value;
+  int get maxTheaterCount =>
+      theaterDistribution.isEmpty ? 0 : theaterDistribution.first.value;
+
+  int get wantToSeeCount => wantToSeePerformances.length;
+  int get boughtCount => boughtPerformances.length;
 
   /// 从原始数据构建统计对象
   factory ProfileStats.fromData({
@@ -89,9 +112,8 @@ class ProfileStats {
     final filtered = _filterByTimeSlice(performances, slice);
 
     // 想看清单（不受 bought/watched 过滤影响，但受时间切片影响）
-    final wantToSeePerformances = filtered
-        .where((p) => p.status == 'want_to_see')
-        .toList();
+    final wantToSeePerformances =
+        filtered.where((p) => p.status == 'want_to_see').toList();
 
     // 按 performanceId 聚合 ticket（取首条）
     final ticketMap = <int, Ticket>{};
@@ -140,7 +162,8 @@ class ProfileStats {
     }
 
     // 演员排名
-    final boughtPerfIds = boughtPerformances.map((p) => p.id).whereType<int>().toSet();
+    final boughtPerfIds =
+        boughtPerformances.map((p) => p.id).whereType<int>().toSet();
     final actorCounts = <String, int>{};
     for (final cm in castMembers) {
       if (boughtPerfIds.contains(cm.performanceId)) {
@@ -203,6 +226,7 @@ class ProfileStats {
       showRanking: showRanking,
       timeSlotDistribution: timeSlotCounts,
       wantToSeePerformances: wantToSeePerformances,
+      boughtPerformances: boughtPerformances,
     );
   }
 
@@ -210,19 +234,17 @@ class ProfileStats {
     List<Performance> performances,
     TimeSlice slice,
   ) {
-    final now = DateTime.now();
+    if (slice.isAll) return performances;
+
     return performances.where((p) {
       final date = DateTime.tryParse(p.date);
       if (date == null) return false;
 
-      switch (slice) {
-        case TimeSlice.month:
-          return date.year == now.year && date.month == now.month;
-        case TimeSlice.year:
-          return date.year == now.year;
-        case TimeSlice.all:
-          return true;
+      if (slice.isMonth) {
+        return date.year == slice.year && date.month == slice.month;
       }
+      // isYear
+      return date.year == slice.year;
     }).toList();
   }
 
