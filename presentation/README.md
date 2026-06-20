@@ -6,7 +6,7 @@
 
 > **注意**：`paiqi.vercel.app` 已被他人占用，扫码会打开一个医院内部系统。当前二维码已改为指向 **GitHub Pages** 稳定地址。
 
-- **在线预览地址**：`https://giantpuppy.github.io/paiqi`
+- **在线预览地址**：`https://giantpuppy.github.io/leeks-genius`
 - **二维码文件**：`presentation/assets/qr_paiqi_preview.png`
 - **GitHub Pages 自动部署**：`.github/workflows/deploy-gh-pages.yml`
 - **Vercel 部署配置**：`vercel.json`（备用，需自行选择可用域名）
@@ -17,7 +17,7 @@
 1. 把当前改动 push 到 GitHub。
 2. 进入仓库 Settings → Pages。
 3. Source 选择 **Deploy from a branch**，Branch 选择 `gh-pages` / `/(root)`，点击 Save。
-4. 等待 1–2 分钟，访问 `https://giantpuppy.github.io/paiqi`。
+4. 等待 1–2 分钟，访问 `https://giantpuppy.github.io/leeks-genius`。
 
 ### Vercel 部署（如需使用）
 
@@ -45,7 +45,7 @@ bash scripts/deploy_vercel.sh
 
 - **中文名：** 排期天菜
 - **英文名：** Paiqi
-- **Slogan：** 让每一张票，都有处安放。
+- **Slogan：** 排期的事，交给排期天菜。
 - **视觉风格：** 像素风 + 星之果实紫绿
 - **配色：**
   - 背景黑：`#0F0F0F`

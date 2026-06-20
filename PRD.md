@@ -1,4 +1,4 @@
-# 排期助手 (Paiqi App) — 产品需求文档 (PRD)
+# 排期天菜 (Paiqi App) — 产品需求文档 (PRD)
 
 > **版本**: v1.0  
 > **日期**: 2026/06/01  
@@ -14,7 +14,7 @@
 | 2026/06/20 | Vercel 发布会 Demo 体验收尾：Demo 模式跨平台生效且每次启动强制刷新数据；无用户时自动创建 `demo` 账号，清空旧数据后重新导入卡司排期汇总并自动加入排期流；Web 端隐藏「我的」页面设置入口及设置页内破坏性操作；管理台海报网格按剧目起止时间升序排列；剧目管理页状态选择自动同步排期流（想看/已买/已看加入排期流，未标记移出），返回管理台时自动刷新；表格角色列宽度加大减少截断；修复 `database_helper_web.dart` 缺失 `deleteAllShows`/`deleteAllPerformances` 导致 Web Release 构建失败的问题 | `lib/main.dart`, `lib/services/schedule_import_service.dart`, `lib/screens/profile_screen.dart`, `lib/screens/settings_page.dart`, `lib/screens/monthly_workbench_screen.dart`, `lib/screens/show_management_screen.dart`, `lib/widgets/show_table_editor.dart`, `lib/database/database_helper_web.dart` |
 | 2026/06/20 | 场次级排期流改造：给 `Performance` 增加 `isInScheduleFlow` 字段，数据库升级到 v13；排期页/月历查询改为按场次 `is_in_schedule_flow` 过滤；管理台海报卡片支持 `待排期 0/Y场` / `排期中 X/Y场` 角标与起止月日；剧目管理页从全剧开关改为按场次加入/移出排期流，支持批量全部加入/移出；备份恢复兼容新字段；设置页重置入口同时重置 show 和 performance 的排期流状态 | `PRD.md`, `performance.dart`, `database_helper_io.dart`, `database_helper_web.dart`, `monthly_workbench_screen.dart`, `show_management_screen.dart`, `show_table_editor.dart`, `data_backup.dart`, `settings_page.dart` |
 | 2026/06/20 | 配置 Vercel 在线预览部署：新增 `vercel.json`、GitHub Actions 工作流 `deploy-web.yml`、本地部署脚本 `deploy_vercel.ps1`/`deploy_vercel.sh`；生成 `paiqi.vercel.app` 二维码并放入 PPT 结尾页；新增 10 分钟演说脚本 `launch_script_offline.md` | `vercel.json`, `.github/workflows/deploy-web.yml`, `scripts/deploy_vercel.ps1`, `scripts/deploy_vercel.sh`, `presentation/presentation.md`, `presentation/launch_script_offline.md`, `presentation/README.md` |
-| 2026/06/20 | 发现 `paiqi.vercel.app` 已被占用，改为使用 GitHub Pages 稳定地址 `https://giantpuppy.github.io/paiqi`：新增 `deploy-gh-pages.yml`、重新生成二维码、更新 PPT 与 README | `.github/workflows/deploy-gh-pages.yml`, `presentation/assets/qr_paiqi_preview.png`, `presentation/presentation.md`, `presentation/README.md` |
+| 2026/06/20 | 发现 `paiqi.vercel.app` 已被占用，改为使用 GitHub Pages 稳定地址 `https://giantpuppy.github.io/leeks-genius`：新增 `deploy-gh-pages.yml`、重新生成二维码、更新 PPT 与 README | `.github/workflows/deploy-gh-pages.yml`, `presentation/assets/qr_paiqi_preview.png`, `presentation/presentation.md`, `presentation/README.md` |
 | 2026/06/20 | Web 演示模式：当 Web 端无登录用户时自动创建 `demo` 账号并导入卡司排期种子数据，确保线上预览扫码直接进入数据饱满的主界面；同步更新 Web 页面标题/描述/Manifest 品牌信息 | `lib/main.dart`, `web/index.html`, `web/manifest.json` |
 | 2026/06/20 | 管理台海报卡片设计定稿：右上角合并为状态+场次角标（`待排期 0/5场` / `排期中 3/5场`）；左下角固定三行信息（剧名/剧院/起止月日 `7.3-7.5`），缺失字段留空保持占位；左上角无角标，不做长按多选；排期流中「删除」文案统一为「移出排期流」 | `PRD.md`, `monthly_workbench_screen.dart`（已合并到上方改造） |
 | 2026/06/18 | 统一添加/管理剧目表格：提取 `ShowTableEditor` 与 `ShowHeaderEditor` 公共组件；`AddShowScreen` 复用公共组件保持原有录入体验；`ShowManagementScreen` 从卡片列表改为与添加页同一张表格，支持二次编辑日期、时间、角色、演员；顶部新增「保存」按钮统一事务保存；保留排期流开关、状态循环、票编辑、删除场次/剧目 | `show_table_editor.dart`, `show_header_editor.dart`, `add_show_screen.dart`, `show_management_screen.dart` |
@@ -100,30 +100,56 @@
 
 ## 1. 产品概述
 
-### 1.1 产品定位
+### 1.1 Slogan
 
-**排期助手** 是一款面向 **重度戏剧/音乐剧爱好者** 的本地排期管理工具。品类空白——目前没有好用的排期管理工具，大多数人用备忘录或系统日历凑合。核心价值是**排期管理**，让用户一站式管理自己的观剧计划。
+**排期的事，交给排期天菜。**
 
-### 1.2 目标用户
+### 1.2 产品定位
 
-| 用户画像 | 特征 | 核心需求 |
-|---------|------|---------|
-| **重度剧迷** | 一年看几十场，同时追多部剧 | 排期管理、场次总览、时间抉择 |
+排期天菜是一款专为中国音乐剧观众打造的排期管理 App。
 
-### 1.3 核心价值主张
+市面上的看剧记录工具都是"看完再记"——买完票才想起来要记录。本产品则从**关注一部剧的那一刻起**就把场次信息纳入排期计划。想看的场次一键标记，已买的票根自动归档，看完的数据自动沉淀。从"关注"到"复盘"，全流程一个 App 搞定。
 
-- **排期管理**：帮用户管好"什么时候去哪儿看什么"，别漏别忘
-- **每天打开**：高频工具，排期板和月历是核心页面
-- **剧场氛围**：暗黑沉浸风格，打开应用就像走进剧场
+### 1.3 目标用户
 
-### 1.4 竞品差异
+这款 App 面向的是一个月需要关注几十场剧的中国音乐剧观众。
 
-| 维度 | 竞品（观演备忘录） | 排期助手 |
-|------|-----------------|---------|
-| **视觉** | 白底+文字列表，像工具 | 剧场暗黑风，沉浸感 |
-| **排期视图** | 标准日历 | 双密度剧场流时间轴 |
-| **数据展示** | 数字平铺 | 海报+卡片+可视化 |
-| **氛围** | 无 | 剧场入场前的感觉 |
+她们同时追好几部戏，关注同一部剧不同日期的演员卡司组合，需要横向对比同一周有哪些剧可看、纵向追踪一部剧从官宣到开票到演出的全周期。
+
+根据中国演出行业协会《2025 年全国演出市场简报》，2025 年全国音乐剧演出 **1.97 万场**，同比增长 **15.04%**；票房收入 **18.07 亿元**，同比增长 **7.55%**；观众人数 **818.59 万人次**，同比增长 **10.41%**。
+
+女性占比高达 **75.5%**，核心年龄层 18-35 岁，一二线城市为主力。音乐剧人均消费约 **221 元**，是电影的 **5 倍**，复购意愿强。跨城观演比例可达 **30% 以上**。
+
+### 1.4 核心痛点：只管记，不管排
+
+一个剧女从"知道一部剧要演了"到"最终买票进场"，中间要经历：关注宣发 → 等排期 → 等演员卡司 → 盘同一周有哪些剧 → 对比演员卡司和时间 → 决定买哪场 → 等开票 → 抢票。
+
+中国音乐剧市场有几个特殊规则让"排"变得更痛：
+- **开票时演员卡司没出全**，不敢买但好位置不等人
+- **票不能退，出票很难**，买错了只能自己在二手平台降价转手
+- **主办方临近打折**，买早怕被背刺买晚怕买不到
+- **排期信息散落五六个平台**，每次决策都要手动拼凑
+
+但市面上的工具——售票类的大麦、猫眼聚焦在购票环节，记录类的记录现场、剧在聚焦在看完之后的记录——**没有一个覆盖从"关注"到"排"的前半段路径**。
+
+### 1.5 解决方案：排 · 记 · 存
+
+- **排**——解决"买哪场"的问题。可视化排期流横向纵向对比演员卡司和时间，想看的场次一键 mark，自动同步到月历总览
+- **记**——解决"买了什么"的问题。已购票场次集中管理，票根、座位、待办事项一场场列清楚
+- **存**——解决"看了多少"的问题。数据自动沉淀，月底年底自动生成可视化图表和看剧报告
+
+### 1.6 产品理念
+
+看剧的快乐不该被排期吃掉。减轻排期的负担，让精力花在值得沉淀的事情上。
+
+### 1.7 竞品差异
+
+| 维度 | 售票类（大麦/猫眼） | 记录类（记录现场/剧在） | 排期天菜 |
+|------|-------------------|----------------------|---------|
+| **覆盖阶段** | 购票环节 | 看完之后的记录 | 关注 → 排期 → 决策 → 购买 → 记录 → 复盘 |
+| **排期能力** | 无 | 无 | 可视化排期流、演员卡司对比、全周期追踪 |
+| **视觉** | 标准电商 | 白底+文字列表 | 剧场暗黑风，沉浸感 |
+| **核心价值** | 买票 | 记录 | **排期决策** |
 
 ### 1.5 设计哲学：黑暗中的光
 
@@ -146,7 +172,7 @@
 ## 2. 功能架构
 
 ```
-排期助手
+排期天菜
 ├── 🔐 用户系统
 │   ├── 注册/登录（本地账号，SHA256+盐）
 │   ├── 多用户隔离（每用户独立数据库）
@@ -613,6 +639,6 @@ class Actor {
 
 ## 总结
 
-排期助手已完成 MVP 核心闭环（录入 → 管理 → 查看 → 备份），当前处于 **UI/UX 打磨阶段**。产品方向明确：**做最懂戏剧爱好者的本地排期工具**。
+排期天菜已完成 MVP 核心闭环（录入 → 管理 → 查看 → 备份），当前处于 **UI/UX 打磨阶段**。产品方向明确：**排期的事，交给排期天菜。**
 
 短期以体验优化为主，中期围绕"提醒-追踪-统计"增强用户粘性，长期考虑数据同步和社区化。技术栈选型务实，Flutter 跨平台覆盖目标场景，OCR + 知识库是核心差异化壁垒。

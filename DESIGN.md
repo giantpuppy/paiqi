@@ -1,4 +1,4 @@
-# 排期助手 — Design System
+# 排期天菜 — Design System
 
 > Based on Spotify Dark Immersive + Notion Pastel Accents
 

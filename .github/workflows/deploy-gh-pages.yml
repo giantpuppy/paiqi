@@ -31,7 +31,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter Web for GitHub Pages
-        run: flutter build web --release --base-href /paiqi/
+        run: flutter build web --release --base-href /leeks-genius/
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
