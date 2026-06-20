@@ -885,12 +885,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                time.isNotEmpty ? time : date,
-                                style: TextStyle(
-                                  fontSize: dateFontSize,
-                                  fontWeight: FontWeight.w600,
-                                  color: statusColor,
+                              Flexible(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    time.isNotEmpty ? time : date,
+                                    style: TextStyle(
+                                      fontSize: dateFontSize,
+                                      fontWeight: FontWeight.w600,
+                                      color: statusColor,
+                                    ),
+                                  ),
                                 ),
                               ),
                               Icon(
