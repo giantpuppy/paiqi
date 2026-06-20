@@ -765,37 +765,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  /// 提取剧场简称：去掉城市前缀和通用后缀
-  String _theaterAbbr(String full) {
-    var s = full;
-    // 去掉城市前缀
-    for (final city in ['北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '重庆', '武汉']) {
-      if (s.startsWith(city)) s = s.substring(city.length);
-    }
-    // 拆分·取最后一段（如果有多段）
-    if (s.contains('·')) s = s.split('·').last;
-    // 去掉括号内容
-    if (s.contains('（')) s = s.substring(0, s.indexOf('（'));
-    if (s.contains('(')) s = s.substring(0, s.indexOf('('));
-    s = s.trim();
-    // 如果太长截取前4字
-    if (s.length > 4) s = s.substring(0, 4);
-    return s.isNotEmpty ? s : full;
-  }
-
   // 大麦风格票根卡片
   Widget _buildTicketCard(Map<String, dynamic> perf, String status,
       Color statusColor, String? coverPath, int showId) {
     final showName = perf['show_name'] ?? '未知剧目';
-    final theater = (perf['theater'] as String?)?.trim() ?? '';
+    final theater = perf['theater'] ?? '未知剧场';
     final rawDate = perf['date'] as String? ?? '';
     final rawTime = perf['time'] as String? ?? '';
     final date = rawDate.length >= 10 ? rawDate.substring(5) : rawDate;
-    // 安全截取时间：取前5字符（如 19:30），不足5字符原样显示
-    final time = rawTime.length >= 5
-        ? rawTime.substring(0, 5)
-        : rawTime;
-    debugPrint('🎫 card: show=$showName theater="$theater" time="$time" rawTime="$rawTime"');
+    final time = rawTime.isNotEmpty ? rawTime.substring(0, 5) : '';
+    final seat = perf['ticket_seat'] as String? ?? '';
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -804,6 +783,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
         final cardHeight = (maxW * 0.28).clamp(120.0, 180.0);
         // 海报宽度：卡片高度的 85%，左侧海报更大
         final posterWidth = cardHeight * 0.85;
+        // 右侧状态区：只显示图标，宽度稍窄
+        final statusAreaWidth = (maxW * 0.12).clamp(48.0, 72.0);
         // 信息区内边距比例化
         final horizontalPadding = maxW * 0.04;
         final verticalPadding = (cardHeight * 0.05).clamp(6.0, 12.0);
@@ -885,47 +866,57 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          // 顶部：左=时间，右=状态星标
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          // 顶部：日期 + 座位（座位在日期下一行）
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Flexible(
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    time.isNotEmpty ? time : date,
+                              Row(
+                                children: [
+                                  Icon(Icons.calendar_today,
+                                      size: dateFontSize * 1.1,
+                                      color: statusColor),
+                                  SizedBox(width: maxW * 0.01),
+                                  Text(
+                                    '$date ${time.isNotEmpty ? time.substring(0, 5) : ''}',
                                     style: TextStyle(
                                       fontSize: dateFontSize,
                                       fontWeight: FontWeight.w600,
                                       color: statusColor,
                                     ),
                                   ),
+                                ],
+                              ),
+                              if (status == 'bought' ||
+                                  status == 'watched') ...[
+                                SizedBox(height: cardHeight * 0.02),
+                                Row(
+                                  children: [
+                                    Icon(Icons.event_seat,
+                                        size: dateFontSize * 1.1,
+                                        color: statusColor),
+                                    SizedBox(width: maxW * 0.01),
+                                    Flexible(
+                                      child: Text(
+                                        seat.isNotEmpty ? seat : '座位未录入',
+                                        style: TextStyle(
+                                          fontSize: dateFontSize,
+                                          color: statusColor.withValues(
+                                              alpha: seat.isNotEmpty
+                                                  ? 1.0
+                                                  : 0.5),
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              Icon(
-                                status_colors.statusIcon(status),
-                                size: dateFontSize * 1.2,
-                                color: statusColor,
-                              ),
+                              ],
                             ],
                           ),
-                          // 底部：剧场简称 + 剧名
+                          // 底部：剧名 + 剧院
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (theater.isNotEmpty)
-                                Text(
-                                  _theaterAbbr(theater),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: metaFontSize,
-                                    color: statusColor.withValues(alpha: 0.7),
-                                  ),
-                                ),
-                              if (theater.isNotEmpty)
-                                SizedBox(height: cardHeight * 0.01),
                               Text(
                                 showName,
                                 maxLines: 1,
@@ -935,9 +926,30 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
+                              SizedBox(height: cardHeight * 0.02),
+                              Text(
+                                theater,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: metaFontSize,
+                                  color: const Color(0xFF8A8F98),
+                                ),
+                              ),
                             ],
                           ),
                         ],
+                      ),
+                    ),
+                  ),
+                  // 右侧状态区：只显示图标
+                  SizedBox(
+                    width: statusAreaWidth,
+                    child: Center(
+                      child: Icon(
+                        status_colors.statusIcon(status),
+                        color: statusColor,
+                        size: (cardHeight * 0.22).clamp(20.0, 28.0),
                       ),
                     ),
                   ),
@@ -1119,8 +1131,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
             BreathingIcon(icon: Icons.bookmark_border),
             SizedBox(height: 16),
             Text(
-              '今日无排期',
+              '今日无标记场次',
               style: TextStyle(color: Color(0xFF8A8F98)),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '在排期流中添加或标记场次后，\n场次会显示在这里',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF7C7C7C),
+              ),
             ),
           ],
         ),

@@ -573,6 +573,21 @@ class DatabaseHelper {
     return db.delete('tickets');
   }
 
+  Future<int> deleteAllShows() async {
+    final db = await instance.database;
+    return db.delete('shows');
+  }
+
+  Future<int> deleteAllPerformances() async {
+    final db = await instance.database;
+    return db.delete('performances');
+  }
+
+  Future<int> deleteAllCastMembers() async {
+    final db = await instance.database;
+    return db.delete('cast_members');
+  }
+
   // ========== Todo Items ==========
   Future<TodoItem> createTodoItem(TodoItem item) async {
     final db = await instance.database;

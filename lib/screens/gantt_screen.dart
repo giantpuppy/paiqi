@@ -68,6 +68,9 @@ PerformanceStatus statusFromString(String? s) {
   }
 }
 
+/// 剧场流时间轴模式
+enum TimelineMode { focus3Day, micro7Day }
+
 class GanttScreen extends StatefulWidget {
   const GanttScreen({super.key});
 
@@ -75,7 +78,7 @@ class GanttScreen extends StatefulWidget {
   State<GanttScreen> createState() => GanttScreenState();
 }
 
-class GanttScreenState extends State<GanttScreen> {
+class GanttScreenState extends State<GanttScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _performances = [];
   Map<int, List<CastMember>> _castMap = {};
   bool _isLoading = true;
@@ -84,12 +87,17 @@ class GanttScreenState extends State<GanttScreen> {
   late int _workbenchMonth;
   final ValueNotifier<int> _workbenchReloadSignal = ValueNotifier(0);
 
+  TimelineMode _mode = TimelineMode.focus3Day;
+  final ValueNotifier<TimelineMode> modeNotifier = ValueNotifier(TimelineMode.focus3Day);
+
   // 连续滚动
   late List<DateTime> _days;
   final ScrollController _scrollController = ScrollController();
   bool _isLoadingMore = false;
-  bool _isSnapping = false; // 正在执行 jumpTo（磁吸或模式切换），封锁所有滚动监听器
+  bool _isSnapping = false;
   Timer? _snapTimer;
+  bool _isTransitioning = false; // 模式切换过渡中，封锁重复切换
+  bool _justSwitched = false;     // 刚刚切换完，短暂封锁磁吸避免干扰
 
   // 动态行高：由 LayoutBuilder 实时更新
   double _availableHeight = 800.0; // 默认值，首次布局后更新
@@ -103,44 +111,37 @@ class GanttScreenState extends State<GanttScreen> {
   // 是否已完成首次滚动定位（避免每次 _loadData 都跳回今天）
   bool _initialScrollDone = false;
 
-  // 三行/七行模式
-  bool _is7Day = false;
-
-  double get _currentRowHeight => _is7Day ? _availableHeight / 7 : _availableHeight / 3;
+  double get _focusRowHeight => _availableHeight / 3;
+  double get _microRowHeight => _availableHeight / 7;
+  double get _currentRowHeight => _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
 
   final DateFormat _fullDateFormat = DateFormat('yyyy-MM-dd');
 
   @override
   void initState() {
     super.initState();
+    modeNotifier.value = _mode;
     final now = DateTime.now();
     _workbenchYear = now.year;
     _workbenchMonth = now.month;
     _initDays();
     _loadData();
     _scrollController.addListener(_onScroll);
-    _scrollController.addListener(_onScrollUpdate);
+    _scrollController.addListener(_updateMonthTitle);
   }
 
-  /// 滚动时实时更新月份标题和焦点行索引。
-  /// _isSnapping 期间跳过——jumpTo 触发的滚动事件不应改变焦点。
-  void _onScrollUpdate() {
-    if (_isSnapping) return;
+  void _updateMonthTitle() {
     if (!_scrollController.hasClients || _days.isEmpty) return;
     if (_availableHeight <= 0) return;
     final rowHeight = _currentRowHeight;
     if (rowHeight <= 0) return;
+    final idx = (_scrollController.offset / rowHeight).floor().clamp(0, _days.length - 1);
+    final d = _days[idx];
+    _monthTitle.value = '${d.year}年${d.month}月';
 
+    // 聚焦日期：屏幕中心点所在的日期
     final centerOffset = _scrollController.offset + _availableHeight / 2;
-
-    // 月份标题
-    final monthIdx = (centerOffset / rowHeight).floor().clamp(0, _days.length - 1);
-    _monthTitle.value = '${_days[monthIdx].year}年${_days[monthIdx].month}月';
-
-    // 焦点行：行中心最接近视口中心的那一行
-    final focalIdx = ((centerOffset - rowHeight / 2) / rowHeight)
-        .round()
-        .clamp(0, _days.length - 1);
+    final focalIdx = (centerOffset / rowHeight).floor().clamp(0, _days.length - 1);
     if (focalIdx != _focalDayIndex.value) {
       _focalDayIndex.value = focalIdx;
       if (mounted) setState(() {});
@@ -156,7 +157,7 @@ class GanttScreenState extends State<GanttScreen> {
 
   /// 滚动到顶部/底部时追加更多天
   void _onScroll() {
-    if (_isLoadingMore || _isSnapping) return;
+    if (_isLoadingMore || _isSnapping || _isTransitioning) return;
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
       _appendDays();
     } else if (_scrollController.position.pixels <= 200) {
@@ -183,7 +184,7 @@ class GanttScreenState extends State<GanttScreen> {
       if (rowHeight > 0) {
         _scrollController.jumpTo(offsetBefore + 30 * rowHeight);
       }
-      _onScrollUpdate();
+      _updateMonthTitle();
       _isLoadingMore = false;
     });
   }
@@ -212,15 +213,10 @@ class GanttScreenState extends State<GanttScreen> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
             if (!_initialScrollDone) {
-              // 把 today（_days[30]）定位到视口中心：
-              // targetOffset = focalIndex * rowHeight - (availableHeight - rowHeight) / 2
-              // focalIndex=30, rowHeight=availableHeight/N → 化简为 29 * rowHeight
-              final initOffset = 29 * _currentRowHeight;
-              print('[Init] availH=${_availableHeight.toStringAsFixed(1)} rowH=${_currentRowHeight.toStringAsFixed(1)} offset=${initOffset.toStringAsFixed(1)}');
-              _scrollController.jumpTo(initOffset);
+              _scrollController.jumpTo(30 * _currentRowHeight);
               _initialScrollDone = true;
             }
-            _onScrollUpdate();
+            _updateMonthTitle();
           }
         });
       }
@@ -239,6 +235,7 @@ class GanttScreenState extends State<GanttScreen> {
     _snapTimer?.cancel();
     _monthTitle.dispose();
     _focalDayIndex.dispose();
+    modeNotifier.dispose();
     _workbenchReloadSignal.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -365,7 +362,9 @@ class GanttScreenState extends State<GanttScreen> {
           ? _buildWorkbenchView()
           : (_isLoading
               ? const Center(child: CircularProgressIndicator())
-              : _buildTimeline()),
+              : _performances.isEmpty
+                  ? _buildEmptyState()
+                  : _buildTimeline()),
     );
   }
 
@@ -551,7 +550,7 @@ class GanttScreenState extends State<GanttScreen> {
             _scrollController.position.maxScrollExtent,
           ),
         );
-        _onScrollUpdate();
+        _updateMonthTitle();
       }
     });
   }
@@ -563,10 +562,9 @@ class GanttScreenState extends State<GanttScreen> {
 
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        // 用户松手后 120ms 执行磁吸。_isSnapping 期间不触发（jumpTo 会产生虚假的 ScrollEnd）。
-        if (notification is ScrollEndNotification && !_isSnapping) {
+        if (notification is ScrollEndNotification && !_isSnapping && !_isTransitioning && !_justSwitched) {
           _snapTimer?.cancel();
-          _snapTimer = Timer(const Duration(milliseconds: 120), _snapToNearestRow);
+          _snapTimer = Timer(const Duration(milliseconds: 150), _snapToNearestRow);
         }
         return false;
       },
@@ -587,79 +585,94 @@ class GanttScreenState extends State<GanttScreen> {
   }
 
   // ==================== 磁吸滚动 ====================
-  // 停止滚动后，jumpTo 到最近的行中心对齐位置。
-  // 用 jumpTo（无动画）避免 animateTo 和模式切换的时序冲突。
 
   void _snapToNearestRow() {
-    if (!_scrollController.hasClients || _isSnapping) return;
+    if (!_scrollController.hasClients || _isTransitioning || _justSwitched) return;
     final rowHeight = _currentRowHeight;
-    if (rowHeight <= 0 || _availableHeight <= 0) return;
+    if (rowHeight <= 0) return;
     final offset = _scrollController.offset;
-    final viewportCenter = offset + _availableHeight / 2;
-    final targetIndex =
-        ((viewportCenter - rowHeight / 2) / rowHeight)
-            .round()
-            .clamp(0, _days.length - 1);
-    final targetOffset =
-        (targetIndex * rowHeight) - (_availableHeight - rowHeight) / 2;
+    final targetIndex = (offset / rowHeight).round().clamp(0, _days.length - 1);
+    final targetOffset = targetIndex * rowHeight;
 
     if ((offset - targetOffset).abs() > 2) {
-      print('[Snap] targetIndex=$targetIndex targetOffset=${targetOffset.toStringAsFixed(1)} current=${offset.toStringAsFixed(1)}');
       _isSnapping = true;
-      _scrollController.jumpTo(
-        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-      );
-      // jumpTo 是同步的，完成后立刻解锁。
-      // _onScrollUpdate 被封锁期间没跑，所以手动同步一次焦点。
-      _isSnapping = false;
-      _onScrollUpdate();
+      _scrollController
+          .animateTo(targetOffset, duration: const Duration(milliseconds: 250), curve: Curves.easeOut)
+          .then((_) => _isSnapping = false);
     }
   }
 
-  // ==================== 模式切换 ====================
+  // ==================== 丝滑模式切换 ====================
 
-  /// 公开给底部导航的切换入口：三行↔七行瞬间切换。
-  void toggleMode() {
-    final focalIndex = _focalDayIndex.value;
-    // _isSnapping 必须在 setState 之前设为 true：
-    // setState 触发 rebuild → ListView 行高变化 → 可能触发滚动监听器 →
-    // _onScrollUpdate 会用旧 offset + 新行高算出错误的 _focalDayIndex。
-    _isSnapping = true;
-    setState(() => _is7Day = !_is7Day);
-    // postFrameCallback：等新布局完成后用新行高 jumpTo 对齐焦点行
+  void _switchMode(TimelineMode newMode) {
+    if (_mode == newMode || _isTransitioning) return;
+
+    _snapTimer?.cancel();
+
+    // 保存切换前的关键状态
+    final previousOffset = _scrollController.offset;
+    final previousMode = _mode;
+
+    _isTransitioning = true;
+    setState(() => _mode = newMode);
+    modeNotifier.value = newMode;
+
+    // 所有计算和滚动调整在布局完成后执行，确保使用最新的行高和 maxScrollExtent
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients || _availableHeight <= 0) {
-        _isSnapping = false;
+      if (!mounted) {
+        _isTransitioning = false;
         return;
       }
-      final newRowHeight = _currentRowHeight;
-      if (newRowHeight <= 0) {
-        _isSnapping = false;
-        return;
+      if (_scrollController.hasClients && _availableHeight > 0) {
+        // 在 post frame 中重新计算行高，确保 _availableHeight 已更新
+        final oldRowHeight = previousMode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
+        final newRowHeight = _mode == TimelineMode.focus3Day ? _focusRowHeight : _microRowHeight;
+
+        // 防御除零：布局异常时直接跳过滚动调整
+        if (oldRowHeight <= 0 || newRowHeight <= 0) {
+          _isTransitioning = false;
+          return;
+        }
+
+        // 以屏幕中心日期为锚点，切换后让它仍位于屏幕中心
+        final viewportCenter = previousOffset + _availableHeight / 2;
+        final focalIndex = (viewportCenter / oldRowHeight).round().clamp(0, _days.length - 1);
+        final targetOffset = (focalIndex * newRowHeight) - (_availableHeight - newRowHeight) / 2;
+
+        _scrollController.jumpTo(
+          targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+        );
+        _updateMonthTitle();
       }
-      final targetOffset =
-          (focalIndex * newRowHeight) - (_availableHeight - newRowHeight) / 2;
-      _scrollController.jumpTo(
-        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-      );
-      _isSnapping = false;
-      _focalDayIndex.value = focalIndex;
-      _monthTitle.value =
-          '${_days[focalIndex].year}年${_days[focalIndex].month}月';
+      // jumpTo 后强制 rebuild，让 _buildMonthTitle 使用新的 offset 计算正确月份
       if (mounted) setState(() {});
+      _isTransitioning = false;
+      // 短暂标记刚刚切换完，阻止磁吸干扰 jumpTo 后的位置
+      _justSwitched = true;
+      Future.delayed(const Duration(milliseconds: 300), () => _justSwitched = false);
     });
   }
 
-  // ==================== 统一日期行 ====================
+  /// 公开给底部导航的切换入口：当前聚焦3天则切到7天宏观，反之亦然。
+  void toggleMode() {
+    _switchMode(
+      _mode == TimelineMode.focus3Day
+          ? TimelineMode.micro7Day
+          : TimelineMode.focus3Day,
+    );
+  }
+
+  // ==================== 统一日期行（行高瞬间切换，避免 ListView 滚动冲突） ====================
 
   Widget _buildDayRow(int index, DateTime today, int focalIndex) {
     final day = _days[index];
     final isToday = _isSameDay(day, today);
     final isFocal = index == focalIndex;
     final dayPerfs = _getPerformancesForDay(day);
-    final targetHeight = _currentRowHeight;
+    final isFocus = _mode == TimelineMode.focus3Day;
+    final targetHeight = isFocus ? _focusRowHeight : _microRowHeight;
     final screenWidth = MediaQuery.of(context).size.width;
-    final labelWidth = screenWidth * (_is7Day ? 0.13 : 0.18);
+    final labelWidth = screenWidth * (isFocus ? 0.18 : 0.13);
     final hasPerformances = dayPerfs.isNotEmpty;
     final isWeekend = day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
 
@@ -721,8 +734,8 @@ class GanttScreenState extends State<GanttScreen> {
                 // 大日期：M.D 格式
                 DefaultTextStyle(
                   style: TextStyle(
-                    fontSize: _is7Day ? screenWidth * 0.042 : screenWidth * 0.038,
-                    fontWeight: _is7Day ? FontWeight.w800 : FontWeight.w700,
+                    fontSize: isFocus ? screenWidth * 0.038 : screenWidth * 0.042,
+                    fontWeight: isFocus ? FontWeight.w700 : FontWeight.w800,
                     color: isFocal
                         ? kBrandPurple
                         : (isToday ? kBrandPurple.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.9)),
@@ -730,18 +743,18 @@ class GanttScreenState extends State<GanttScreen> {
                   child: Text('${day.month}.${day.day}'),
                 ),
                 SizedBox(height: targetHeight * 0.012),
-                // 星期
+                // 星期（放大）
                 DefaultTextStyle(
                   style: TextStyle(
-                    fontSize: _is7Day ? screenWidth * 0.026 : screenWidth * 0.028,
+                    fontSize: isFocus ? screenWidth * 0.028 : screenWidth * 0.026,
                     fontWeight: FontWeight.w600,
                     color: isFocal
                         ? kBrandPurple.withValues(alpha: 0.85)
                         : (isToday ? kBrandPurple.withValues(alpha: 0.6) : const Color(0xFF6B7280)),
                   ),
-                  child: Text(_is7Day
-                      ? '周${['一', '二', '三', '四', '五', '六', '日'][(day.weekday - 1).clamp(0, 6)]}'
-                      : ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][(day.weekday - 1).clamp(0, 6)]),
+                  child: Text(isFocus
+                      ? ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][(day.weekday - 1).clamp(0, 6)]
+                      : '周${['一', '二', '三', '四', '五', '六', '日'][(day.weekday - 1).clamp(0, 6)]}'),
                 ),
               ],
             ),
@@ -752,10 +765,10 @@ class GanttScreenState extends State<GanttScreen> {
               height: targetHeight,
               color: isWeekend ? const Color(0xFF161616) : Colors.transparent,
               child: hasPerformances
-                  ? (_is7Day
-                      ? _buildMicroContent(dayPerfs, targetHeight, screenWidth, isToday)
-                      : _buildFocusContent(dayPerfs, targetHeight, labelWidth, screenWidth, isToday))
-                  : const SizedBox(),
+                  ? (isFocus
+                      ? _buildFocusContent(dayPerfs, targetHeight, labelWidth, screenWidth, isToday)
+                      : _buildMicroContent(dayPerfs, targetHeight, screenWidth, isToday))
+                  : (isFocus ? const SizedBox() : const SizedBox()),
             ),
           ),
         ],
@@ -835,20 +848,6 @@ class GanttScreenState extends State<GanttScreen> {
         isToday,
       ),
     );
-  }
-
-  /// 提取剧场简称：去掉城市前缀和通用后缀
-  String _theaterAbbr(String full) {
-    var s = full;
-    for (final city in ['北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '重庆', '武汉']) {
-      if (s.startsWith(city)) s = s.substring(city.length);
-    }
-    if (s.contains('·')) s = s.split('·').last;
-    if (s.contains('（')) s = s.substring(0, s.indexOf('（'));
-    if (s.contains('(')) s = s.substring(0, s.indexOf('('));
-    s = s.trim();
-    if (s.length > 4) s = s.substring(0, 4);
-    return s.isNotEmpty ? s : full;
   }
 
   Widget _buildFocusCard(
@@ -948,9 +947,8 @@ class GanttScreenState extends State<GanttScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 顶部：左=时间，右=状态星标
+                    // 时间
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         if (time.isNotEmpty)
@@ -959,11 +957,6 @@ class GanttScreenState extends State<GanttScreen> {
                             width: cardWidth,
                             isToday: isToday,
                           ),
-                        Icon(
-                          statusIcon(effectiveStatus),
-                          size: cardWidth * 0.07,
-                          color: Colors.white.withValues(alpha: 0.8),
-                        ),
                       ],
                     ),
                     // 卡司列表（主演优先，最多 3 条），垂直居中
@@ -981,26 +974,8 @@ class GanttScreenState extends State<GanttScreen> {
                       ),
                     ] else
                       const Spacer(),
-                    // 底部信息：剧场简称 + 剧名
-                    if (theater.isNotEmpty)
-                      Text(
-                        _theaterAbbr(theater),
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.65),
-                          fontSize: cardWidth * 0.045,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black.withValues(alpha: 0.7),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    if (theater.isNotEmpty && showName != '未知')
-                      SizedBox(height: cardHeight * 0.005),
-                    if (showName != '未知')
+                    // 底部信息：剧名常驻，剧场小字
+                    if (showName != '未知') ...[
                       Text(
                         showName,
                         style: TextStyle(
@@ -1011,6 +986,24 @@ class GanttScreenState extends State<GanttScreen> {
                             Shadow(
                               color: Colors.black.withValues(alpha: 0.8),
                               blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (theater.isNotEmpty) SizedBox(height: cardHeight * 0.005),
+                    ],
+                    if (theater.isNotEmpty)
+                      Text(
+                        theater,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.65),
+                          fontSize: cardWidth * 0.045,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.7),
+                              blurRadius: 4,
                             ),
                           ],
                         ),
@@ -1175,16 +1168,19 @@ class GanttScreenState extends State<GanttScreen> {
             width: 1,
           ),
           boxShadow: [
+            // 彩色光晕
             BoxShadow(
               color: color.withValues(alpha: 0.25),
               blurRadius: 14,
               spreadRadius: 1,
             ),
+            // 边缘溢光
             BoxShadow(
               color: color.withValues(alpha: 0.10),
               blurRadius: 28,
               spreadRadius: 3,
             ),
+            // 底部投影
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.35),
               blurRadius: 8,
@@ -1658,10 +1654,10 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
 
   Widget _buildFilterBar() {
     final filters = [
-      (_ShowFilter.all, '全部', Icons.filter_list, const Color(0xFF6B5BCD)),
-      (_ShowFilter.bought, '已买', Icons.confirmation_num_outlined, const Color(0xFF34D399)),
-      (_ShowFilter.wantToSee, '想看', Icons.star_outline_rounded, const Color(0xFF811FE2)),
-      (_ShowFilter.watched, '已看', Icons.visibility_outlined, const Color(0xFFC9A06C)),
+      (_ShowFilter.all, '全部', null),
+      (_ShowFilter.wantToSee, '想看', const Color(0xFF811FE2)),
+      (_ShowFilter.bought, '已买', const Color(0xFF34D399)),
+      (_ShowFilter.watched, '已观演', const Color(0xFF9CA3AF)),
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -1669,14 +1665,13 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
       child: Row(
         children: filters.map((f) {
           final isActive = _filter == f.$1;
-          final color = f.$4;
+          final color = f.$3 ?? const Color(0xFF6B5BCD);
           return Padding(
             padding: const EdgeInsets.only(right: 8),
             child: GestureDetector(
               onTap: () => setState(() => _filter = f.$1),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: isActive ? color.withValues(alpha: 0.15) : Colors.transparent,
                   borderRadius: BorderRadius.circular(20),
@@ -1685,24 +1680,13 @@ class _ShowManagementSheetState extends State<_ShowManagementSheet> {
                     width: 1,
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      f.$3,
-                      size: 14,
-                      color: isActive ? color : const Color(0xFF8A8F98),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      f.$2,
-                      style: TextStyle(
-                        color: isActive ? color : const Color(0xFF8A8F98),
-                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  f.$2,
+                  style: TextStyle(
+                    color: isActive ? color : const Color(0xFF8A8F98),
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 13,
+                  ),
                 ),
               ),
             ),
