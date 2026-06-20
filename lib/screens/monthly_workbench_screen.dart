@@ -6,7 +6,6 @@ import '../models/show.dart';
 import '../models/performance.dart';
 import '../utils/status_colors.dart';
 import '../widgets/breathing_icon.dart';
-import 'add_show_screen.dart';
 import 'show_management_screen.dart';
 
 /// 月度管理工作台 — 海报网格画廊
@@ -213,16 +212,6 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
     }
   }
 
-  Future<void> _addNewShow() async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const AddShowScreen()),
-    );
-    if (result == true) {
-      _loadData();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -331,20 +320,6 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
               color: Colors.white.withValues(alpha: 0.5),
             ),
           ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _addNewShow,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('添加剧目'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: kBrandPurple,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -372,7 +347,7 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
 
     return GestureDetector(
       onTap: () => _navigateToShowManagement(show),
-      onLongPress: () => _showShowActions(show),
+      onLongPress: () => _navigateToShowManagement(show),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
@@ -555,134 +530,5 @@ class _MonthlyWorkbenchScreenState extends State<MonthlyWorkbenchScreen> {
       return '$startMonth.$startDay-$endDay';
     }
     return '$startMonth.$startDay-$endMonth.$endDay';
-  }
-
-  Future<void> _showShowActions(Show show) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 8),
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3A3A3A),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            _buildActionTile(
-              icon: Icons.edit_outlined,
-              label: '剧场编辑',
-              value: 'edit_theater',
-            ),
-            _buildActionTile(
-              icon: Icons.calendar_today_outlined,
-              label: '排期编辑',
-              value: 'edit_schedule',
-            ),
-            _buildActionTile(
-              icon: Icons.edit_note,
-              label: '剧目编辑',
-              value: 'edit_show',
-            ),
-            _buildActionTile(
-              icon: Icons.delete_outline,
-              label: '剧目删除',
-              value: 'delete_show',
-              isDestructive: true,
-            ),
-            _buildActionTile(
-              icon: Icons.delete_forever_outlined,
-              label: '删除剧场',
-              value: 'delete_theater',
-              isDestructive: true,
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-
-    if (action == null || !mounted) return;
-
-    switch (action) {
-      case 'edit_theater':
-      case 'edit_schedule':
-      case 'edit_show':
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ShowManagementScreen(showId: show.id!),
-          ),
-        );
-        if (result == true) _loadData();
-        break;
-      case 'delete_show':
-      case 'delete_theater':
-        _confirmDeleteShow(show);
-        break;
-    }
-  }
-
-  Widget _buildActionTile({
-    required IconData icon,
-    required String label,
-    required String value,
-    bool isDestructive = false,
-  }) {
-    final color = isDestructive ? const Color(0xFFF54A45) : Colors.white;
-    return ListTile(
-      leading: Icon(icon, color: color, size: 22),
-      title: Text(
-        label,
-        style: TextStyle(color: color, fontSize: 15),
-      ),
-      onTap: () => Navigator.pop(context, value),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-      visualDensity: const VisualDensity(vertical: -1),
-    );
-  }
-
-  Future<void> _confirmDeleteShow(Show show) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          '确认删除',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          '删除「${show.name}」将同时删除所有场次和卡司数据，此操作不可恢复。',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消', style: TextStyle(color: Color(0xFF8A8F98))),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除', style: TextStyle(color: Color(0xFFF54A45))),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    final db = DatabaseHelper.instance;
-    await db.deleteShow(show.id!);
-    _loadData();
   }
 }
