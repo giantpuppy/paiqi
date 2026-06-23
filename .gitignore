@@ -49,3 +49,9 @@ gen_test.py
 春逝排期.xlsx
 web/ocr_test.html
 web/test_cast.jpg
+*.db
+icon_designer.html
+flutter_01.log
+
+# Claude Code worktrees
+.claude/worktrees/

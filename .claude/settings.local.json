@@ -102,7 +102,24 @@
       "WebFetch(domain:www.instagram.com)",
       "Bash(xxd lib/screens/calendar_screen.dart)",
       "Bash(chardetect lib/screens/calendar_screen.dart)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(adb install *)",
+      "Bash(where adb *)",
+      "Bash(powershell -Command ' *)",
+      "Bash(\"C:\\\\Users\\\\giant\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell *)",
+      "Bash(/c/Users/giant/AppData/Local/Android/Sdk/platform-tools/adb.exe shell *)",
+      "Bash($ANDROID_HOME/platform-tools/adb devices *)",
+      "Bash($ADB shell *)",
+      "Bash(MSYS_NO_PATHCONV=1 $ADB shell *)",
+      "Bash(MSYS_NO_PATHCONV=1 $ADB push *)",
+      "Bash(taskkill //F //IM flutter.exe)",
+      "Bash(adb -s KZGEDE8HM7WKT8CI shell am force-stop com.example.paiqi_app)",
+      "Bash(adb -s KZGEDE8HM7WKT8CI install -r build/app/outputs/flutter-apk/app-debug.apk)",
+      "Bash(adb -s KZGEDE8HM7WKT8CI shell am start -n com.example.paiqi_app/.MainActivity)",
+      "Bash(adb *)",
+      "Bash(where gh *)",
+      "Bash(winget install *)",
+      "Bash(C:/Program Files/GitHub CLI/gh.exe *)"
     ]
   },
   "hooks": {

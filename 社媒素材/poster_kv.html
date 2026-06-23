@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>排期天菜 · 主 KV</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 2vw;
+    font-family: 'Noto Sans SC', sans-serif;
+  }
+
+  .poster {
+    width: min(800px, 92vw);
+    aspect-ratio: 5 / 7;
+    background: #0F0F0F;
+    border-radius: 3%;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* 紫色光晕 */
+  .poster::before {
+    content: '';
+    position: absolute;
+    top: -12%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 50%;
+    aspect-ratio: 1;
+    background: radial-gradient(circle, rgba(139,92,246,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ===== 右上角 QR（绝对定位） ===== */
+  .qr {
+    position: absolute;
+    top: 4%;
+    right: 4%;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    z-index: 20;
+  }
+
+  .qr-label {
+    text-align: right;
+    font-size: clamp(8px, 1.1vw, 10px);
+    color: rgba(255,255,255,0.25);
+    line-height: 1.4;
+  }
+
+  .qr-label strong {
+    display: block;
+    color: rgba(255,255,255,0.4);
+    font-size: clamp(9px, 1.2vw, 11px);
+  }
+
+  .qr img {
+    width: clamp(32px, 5vw, 44px);
+    aspect-ratio: 1;
+    border-radius: 14%;
+    border: 1px solid rgba(139,92,246,0.1);
+  }
+
+  /* ===== 上半部分：文字区 ===== */
+  .text-section {
+    padding: 8% 8% 0;
+    text-align: center;
+    z-index: 10;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .text-section .icon {
+    width: clamp(48px, 10vw, 80px);
+    aspect-ratio: 1;
+    border-radius: 22%;
+    margin-bottom: 4%;
+    box-shadow: 0 1vh 3vh rgba(139,92,246,0.25);
+  }
+
+  .text-section .concept {
+    font-size: clamp(14px, 2.2vw, 20px);
+    color: rgba(255,255,255,0.55);
+    letter-spacing: 0.08em;
+    line-height: 1.5;
+    max-width: 80%;
+    margin: 0 auto;
+  }
+
+  /* ===== 截图交叠区 ===== */
+  .screen-area {
+    flex: 1;
+    width: 100%;
+    position: relative;
+    z-index: 5;
+    min-height: 0;
+  }
+
+  .phone {
+    position: absolute;
+    border-radius: 4%;
+    overflow: hidden;
+    box-shadow: 0 0.8vh 3vh rgba(0,0,0,0.45);
+  }
+
+  .phone img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* 月历：左上 */
+  .phone-cal {
+    width: 30%;
+    height: 48%;
+    top: 10%;
+    left: 12%;
+    z-index: 2;
+    transform: rotate(-1.5deg);
+    border: 1.5px solid rgba(139,92,246,0.1);
+  }
+
+  /* 排期流：右下，轻度交叠 */
+  .phone-gantt {
+    width: 34%;
+    height: 54%;
+    bottom: 10%;
+    right: 10%;
+    z-index: 4;
+    transform: rotate(1.5deg);
+    border: 1.5px solid rgba(139,92,246,0.15);
+  }
+
+  /* ===== 底部 slogan ===== */
+  .slogan {
+    padding: 0 0 5%;
+    text-align: center;
+    z-index: 10;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .slogan p {
+    font-size: clamp(12px, 1.6vw, 15px);
+    color: rgba(255,255,255,0.28);
+    letter-spacing: 0.12em;
+  }
+</style>
+</head>
+<body>
+
+<div class="poster">
+
+  <!-- 右上 QR -->
+  <div class="qr">
+    <div class="qr-label">
+      <strong>扫码关注</strong>
+      官方小红书账号
+    </div>
+    <img src="排期天菜-小红书账号二维码.jpg" alt="qr">
+  </div>
+
+  <!-- 文字区：icon + 一句话 -->
+  <div class="text-section">
+    <img class="icon" src="../assets/icon_source.png" alt="排期天菜">
+    <p class="concept">专为中国音乐剧观众打造的排期管理 App</p>
+  </div>
+
+  <!-- 截图交叠 -->
+  <div class="screen-area">
+    <div class="phone phone-cal">
+      <img src="主要页面预览素材/tab1-月历主页.jpg" alt="月历">
+    </div>
+    <div class="phone phone-gantt">
+      <img src="主要页面预览素材/剧目场次排期流.jpg" alt="排期流">
+    </div>
+  </div>
+
+  <!-- slogan -->
+  <div class="slogan">
+    <p>排期的事，交给排期天菜。</p>
+  </div>
+
+</div>
+
+</body>
+</html>

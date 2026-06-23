@@ -38,13 +38,12 @@ flutter:
   uses-material-design: true
   assets:
     - assets/stardrop.png
-    - assets/icon_source.png
     - assets/profile_avatar.png
 
-flutter_launcher_icons:
-  android: true
-  ios: false
-  image_path: assets/icon_source.png
-  adaptive_icon_background: "#1A0F2E"
-  adaptive_icon_foreground: assets/icon_source.png
-  min_sdk_android: 21
+# flutter_launcher_icons:
+#   android: true
+#   ios: false
+#   image_path: assets/icon_source.png
+#   adaptive_icon_background: "#1A0F2E"
+#   adaptive_icon_foreground: assets/icon_source.png
+#   min_sdk_android: 21

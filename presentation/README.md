@@ -38,20 +38,25 @@ bash scripts/deploy_vercel.sh
 | 文件 | 说明 |
 |------|------|
 | `presentation.md` | Marp 幻灯片源文件（18 页） |
-| `screenshots/` | 截图存放目录（当前为占位，需替换为 App 实机截图） |
-| `assets/` | 其他素材（Logo、二维码等） |
+| `presentation.pdf` | 最终导出 PDF |
+| `presentation.pptx` | 最终导出 PPTX |
+| `presentation.*.png` | 各页幻灯片 PNG 截图 |
+| `assets/` | 素材（二维码等） |
 
 ## 品牌规范
 
 - **中文名：** 排期天菜
 - **英文名：** LeeksGenius
 - **Slogan：** 排期的事，交给排期天菜。
-- **视觉风格：** 像素风 + 星之果实紫绿
+- **视觉风格：** 剧场暗黑风，"黑暗中的光"设计哲学
 - **配色：**
-  - 背景黑：`#0F0F0F`
-  - 主色紫：`#8B5CF6`
-  - 强调绿：`#34D399`
-  - 辅助灰：`#B0B0B0`
+  - 背景深黑：`#121212`（Canvas）
+  - 品牌紫：`#6B5BCD`（Brand Primary）
+  - 想看紫：`#811FE2`
+  - 已买绿：`#34D399`
+  - 今日红：`#F54A45`
+  - 文字白：`#FFFFFF`
+  - 辅助灰：`#B3B3B3`
 
 ## 安装 Marp CLI
 
@@ -101,10 +106,4 @@ npx @marp-team/marp-cli presentation.md --preview --watch
 4. Canva 会自动按页拆分
 5. 替换占位截图、调整字体、贴二维码
 
-## 截图替换说明
-
-所有截图位置在 `presentation.md` 中用 `【截图位置】` 标记。请按 `screenshots/README.md` 中的规格准备图片，然后替换占位符。
-
 ---
-
-**提示：** 当前版本截图位置为 CSS 占位框，不包含真实图片。导出前请先截图并替换。
