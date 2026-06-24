@@ -1,12 +1,9 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'database/database_helper.dart';
-import 'utils/cover_helper.dart';
+import 'utils/cover_import_helper.dart';
 import 'services/schedule_import_service.dart';
 import 'services/user_service.dart';
 import 'utils/seed_data.dart';
@@ -15,119 +12,76 @@ import 'screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('zh_CN');
 
-  final autoLoginUser = await UserService.getAutoLoginUser();
-  final currentUser = await UserService.getCurrentUsername();
-  String? effectiveUser = autoLoginUser ?? currentUser;
+  // 全局错误捕获，防止 web 端因后台网络错误导致白屏
+  FlutterError.onError = (details) {
+    debugPrint('[FlutterError] ${details.exception}');
+  };
 
-  // Demo 模式：没有用户时自动创建 demo 账号并导入演示数据
-  // 产品发布会专用，确保任何设备打开应用都能直接看到完整数据
-  if (effectiveUser == null) {
-    const demoUsername = 'demo';
-    final users = await UserService.getAllUsers();
-    if (!users.any((u) => u.username == demoUsername)) {
-      await UserService.register(demoUsername, 'demo123');
+  // 确保 runApp 一定被调用，即使初始化出错
+  String? effectiveUser;
+  try {
+    await initializeDateFormatting('zh_CN');
+
+    final autoLoginUser = await UserService.getAutoLoginUser();
+    final currentUser = await UserService.getCurrentUsername();
+    effectiveUser = autoLoginUser ?? currentUser;
+
+    // Demo 模式：没有用户时自动创建 demo 账号并导入演示数据
+    if (effectiveUser == null) {
+      const demoUsername = 'demo';
+      final users = await UserService.getAllUsers();
+      if (!users.any((u) => u.username == demoUsername)) {
+        await UserService.register(demoUsername, 'demo123');
+      }
+      await UserService.setAutoLoginUser(demoUsername);
+      effectiveUser = demoUsername;
     }
-    await UserService.setAutoLoginUser(demoUsername);
-    effectiveUser = demoUsername;
-  }
 
-  if (effectiveUser != null) {
-    await DatabaseHelper.switchUser(effectiveUser);
-    final isDemoUser = effectiveUser == 'demo';
-    // Demo 模式：如果数据被清空则重新导入，否则跳过
-    if (isDemoUser) {
+    if (effectiveUser != null) {
+      await DatabaseHelper.switchUser(effectiveUser);
+      final isDemoUser = effectiveUser == 'demo';
+      // 检查数据库是否已有数据（可能来自嵌入的 JSON 资源）
       final existingShows = await DatabaseHelper.instance.getAllShows();
-      if (existingShows.isEmpty) {
+      if (existingShows.isNotEmpty) {
+        // 已有数据（嵌入的或之前导入的），跳过演示数据导入
+        if (kDebugMode) {
+          debugPrint('Database already has ${existingShows.length} shows, skipping import');
+        }
+      } else if (isDemoUser) {
         await ScheduleImportService.resetFlag(effectiveUser);
+        final importResult = await ScheduleImportService.importBundleIfNeeded(
+          effectiveUser,
+          autoJoinScheduleFlow: true,
+        );
+        if (kDebugMode && importResult != null) {
+          debugPrint('ScheduleImportService: $importResult');
+        }
+      } else {
+        final importResult = await ScheduleImportService.importBundleIfNeeded(
+          effectiveUser,
+          autoJoinScheduleFlow: false,
+        );
+        if (kDebugMode && importResult != null) {
+          debugPrint('ScheduleImportService: $importResult');
+        }
+      }
+      // 导入海报：仅原生平台
+      if (!kIsWeb) {
+        await importCovers();
       }
     }
-    final importResult = await ScheduleImportService.importBundleIfNeeded(
-      effectiveUser,
-      autoJoinScheduleFlow: isDemoUser,
-    );
-    if (kDebugMode && importResult != null) {
-      debugPrint('ScheduleImportService: $importResult');
-    }
-    // 导入海报：匹配 covers 目录中的图片到数据库剧目
-    await _importCovers();
-  }
 
-  if (kDebugMode) {
-    await seedTestData();
+    if (kDebugMode) {
+      await seedTestData();
+    }
+  } catch (e) {
+    debugPrint('[main] 初始化错误: $e');
+    // 出错时仍以无用户状态启动，保证 app 能显示
+    effectiveUser = null;
   }
 
   runApp(PaiqiApp(initialUser: effectiveUser));
-}
-
-/// 匹配 covers 目录中的图片到数据库剧目
-Future<void> _importCovers() async {
-  try {
-    final appDir = await getApplicationDocumentsDirectory();
-    final coversDir = Directory(p.join(appDir.path, 'covers'));
-    if (!await coversDir.exists()) return;
-
-    final files = coversDir.listSync().whereType<File>().where(
-      (f) => f.path.endsWith('.jpg') || f.path.endsWith('.png'),
-    ).toList();
-    if (files.isEmpty) return;
-
-    final db = DatabaseHelper.instance;
-    final shows = await db.getAllShows();
-
-    int imported = 0;
-    for (final show in shows) {
-      if (show.coverPath != null && show.coverPath!.isNotEmpty) {
-        final existing = File(show.coverPath!);
-        if (await existing.exists()) continue;
-      }
-
-      final safeName = CoverHelper.sanitizeFileName(show.name);
-      File? bestMatch;
-
-      for (final file in files) {
-        final baseName = p.basename(file.path).toLowerCase();
-        final nameWithoutExt = p.basenameWithoutExtension(file.path).toLowerCase();
-        final showNameLower = show.name.toLowerCase();
-        final safeNameLower = safeName.toLowerCase();
-
-        // 精确前缀匹配
-        if (baseName.startsWith(safeNameLower) ||
-            nameWithoutExt.startsWith(showNameLower) ||
-            nameWithoutExt.startsWith(safeNameLower)) {
-          bestMatch = file;
-          break;
-        }
-        // 模糊包含匹配：文件名包含剧名，或剧名包含文件名（≥2字符）
-        if ((nameWithoutExt.contains(showNameLower) && showNameLower.length >= 2) ||
-            (showNameLower.contains(nameWithoutExt) && nameWithoutExt.length >= 2)) {
-          bestMatch = file;
-          break;
-        }
-      }
-
-      if (bestMatch == null) continue;
-
-      final newPath = p.join(coversDir.path, '${safeName}_封面.jpg');
-      if (bestMatch.path != newPath) {
-        if (await File(newPath).exists()) {
-          await File(newPath).delete();
-        }
-        await bestMatch.rename(newPath);
-      }
-
-      await db.updateShow(show.copyWith(coverPath: newPath));
-      imported++;
-      debugPrint('[CoverImport] 已导入: ${show.name}');
-    }
-
-    if (imported > 0) {
-      debugPrint('[CoverImport] 完成，共导入 $imported 张海报');
-    }
-  } catch (e) {
-    debugPrint('[CoverImport] 错误: $e');
-  }
 }
 
 class PaiqiApp extends StatelessWidget {

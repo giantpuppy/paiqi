@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:html';
+import 'package:flutter/services.dart' show rootBundle;
 import '../models/show.dart';
 import '../models/performance.dart';
 import '../models/cast_member.dart';
@@ -178,6 +179,65 @@ class _WebDB {
       print('[WebDB] Data loaded successfully for $_storageKey');
     } catch (e, st) {
       print('[WebDB] Failed to load data: $e');
+      print(st);
+    }
+  }
+
+  /// 从嵌入的 JSON 资源加载真实数据（首次访问时使用）
+  Future<void> loadFromEmbeddedAsset() async {
+    try {
+      final jsonStr = await rootBundle.loadString('assets/user_data.json');
+      final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+
+      // 清空现有数据
+      _tables.clear();
+      _autoIncrement.clear();
+
+      // 导入各个表
+      final tableNames = ['shows', 'performances', 'cast_members', 'actors', 'tickets', 'todo_items'];
+      int maxId = 0;
+      for (final tableName in tableNames) {
+        final rows = (data[tableName] as List<dynamic>?) ?? [];
+        final mapped = rows.map((r) {
+          final row = Map<String, dynamic>.from(r as Map<dynamic, dynamic>);
+          // 确保必要字段存在
+          if (tableName == 'performances') {
+            row['status'] ??= 'unmarked';
+            row['is_in_schedule_flow'] ??= 0;
+          }
+          if (tableName == 'shows') {
+            row['cover_path'] ??= null;
+            row['is_in_schedule_flow'] ??= 0;
+          }
+          if (tableName == 'cast_members') {
+            row['is_featured'] ??= 0;
+          }
+          if (row['id'] != null && (row['id'] as int) > maxId) {
+            maxId = row['id'] as int;
+          }
+          return row;
+        }).toList();
+        _tables[tableName] = mapped;
+        _autoIncrement[tableName] = maxId;
+        print('[WebDB] Loaded ${mapped.length} rows into $tableName from embedded asset');
+      }
+
+      // 初始化空表
+      _tables.putIfAbsent('ocr_corrections', () => []);
+      _tables.putIfAbsent('show_templates', () => []);
+      _autoIncrement.putIfAbsent('ocr_corrections', () => 0);
+      _autoIncrement.putIfAbsent('show_templates', () => 0);
+
+      // 标记迁移已完成
+      _tables['_tickets_migrated'] = [{'done': true}];
+      _tables['_v11_migrated'] = [{'done': true}];
+      _tables['_v12_migrated'] = [{'done': true}];
+      _tables['_v13_migrated'] = [{'done': true}];
+
+      await _save();
+      print('[WebDB] Embedded asset data saved to localStorage');
+    } catch (e, st) {
+      print('[WebDB] Failed to load embedded asset: $e');
       print(st);
     }
   }
@@ -488,7 +548,14 @@ class DatabaseHelper {
         FOREIGN KEY (performance_id) REFERENCES performances (id) ON DELETE CASCADE
       )
     ''');
+    // 先尝试从 localStorage 加载
     await db._load();
+    // 如果 localStorage 没有数据，从嵌入的 JSON 资源加载真实数据
+    final hasData = db._tables.containsKey('shows') && (db._tables['shows']?.isNotEmpty ?? false);
+    if (!hasData) {
+      print('[WebDB] No localStorage data found, loading from embedded asset...');
+      await db.loadFromEmbeddedAsset();
+    }
     print('[WebDB] Init complete for user: $_username');
   }
 

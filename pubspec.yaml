@@ -37,3 +37,4 @@ flutter:
   assets:
     - assets/stardrop.png
     - assets/profile_avatar.png
+    - assets/user_data.json

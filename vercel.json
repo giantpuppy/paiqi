@@ -1,9 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "if [ ! -d \"flutter_sdk\" ]; then git clone https://github.com/flutter/flutter.git -b stable --depth 1 flutter_sdk; fi && export PATH=\"$PATH:$PWD/flutter_sdk/bin\" && flutter config --no-analytics >/dev/null && flutter config --enable-web >/dev/null && flutter build web --release",
+  "buildCommand": "bash vercel-build.sh",
   "outputDirectory": "build/web",
   "installCommand": "echo 'Flutter SDK is installed during buildCommand'",
   "framework": null,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "credentialless" }
+      ]
+    }
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true
