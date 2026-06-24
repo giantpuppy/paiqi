@@ -1,0 +1,35 @@
+{
+    "name": "排期天菜",
+    "short_name": "排期天菜",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0F0F0F",
+    "theme_color": "#8B5CF6",
+    "description": "排期天菜——专为中国音乐剧观众打造的排期管理App。排期的事，交给排期天菜。",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
